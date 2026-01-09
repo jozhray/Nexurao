@@ -810,7 +810,7 @@ export default function Chat({
 
 
     return (
-        <div className="flex-1 flex flex-col h-full relative bg-[#0b141a]">
+        <div className="flex-1 flex flex-col h-full min-h-0 relative bg-[#0b141a]">
             {/* Background Pattern */}
             {chatBackground?.url ? (
                 <div

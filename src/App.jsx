@@ -607,7 +607,7 @@ function App() {
   }
 
   return (
-    <div className={`h-screen w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
+    <div className={`h-[100dvh] w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
       <WeatherEffects theme={theme} />
       <div className="absolute inset-0 top-0 h-32 bg-[#00a884] z-0 hidden md:block"></div>
 
@@ -683,7 +683,7 @@ function App() {
         </div>
       )}
 
-      <div className="flex-1 z-10 flex h-full justify-center md:py-5 md:px-5 lg:px-14">
+      <div className="flex-1 z-10 flex h-full min-h-0 justify-center md:py-5 md:px-5 lg:px-14">
         <div className="w-full h-full max-w-[1600px] bg-transparent flex flex-col md:flex-row shadow-2xl overflow-hidden rounded-none md:rounded-xl border-none md:border border-[#323b42]">
 
           {/* LEFT PANEL */}
@@ -783,7 +783,7 @@ function App() {
           </div>
 
           {/* RIGHT PANEL */}
-          <div className={`flex-1 flex flex-col bg-[var(--wa-chat-bg)] h-full relative min-w-0 ${activeChat ? 'flex' : 'hidden md:flex'}`}>
+          <div className={`flex-1 flex flex-col bg-[var(--wa-chat-bg)] h-full min-h-0 relative min-w-0 ${activeChat ? 'flex' : 'hidden md:flex'}`}>
             {activeChat ? (
               <>
                 <Chat
