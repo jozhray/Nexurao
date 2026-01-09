@@ -8,8 +8,25 @@ export default function Auth({ onLogin }) {
     const [username, setUsername] = useState('');
     const [displayName, setDisplayName] = useState('');
     const [password, setPassword] = useState('');
+    const [avatarUrl, setAvatarUrl] = useState(null);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+
+    const handleAvatarChange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (file.size > 1024 * 1024) { // 1MB limit for base64 safety
+            setError('Image must be less than 1MB');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setAvatarUrl(reader.result);
+        };
+        reader.readAsDataURL(file);
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -68,6 +85,7 @@ export default function Auth({ onLogin }) {
                     name: username, // Identity
                     displayName: displayName.trim(),
                     password: password,
+                    avatarUrl: avatarUrl,
                     about: 'Hey there! I am using Nexurao.',
                     createdAt: Date.now()
                 };
@@ -167,6 +185,33 @@ export default function Auth({ onLogin }) {
                                             className="block w-full pl-[66px] pr-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm placeholder-white/20 focus:outline-none focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20 transition-all font-medium selection:bg-cyan-500/30 backdrop-blur-sm"
                                             placeholder="Your public name"
                                         />
+                                    </div>
+                                </div>
+                            )}
+
+                            {isRegister && (
+                                <div className="space-y-3 animate-in slide-in-from-top-2 duration-300">
+                                    <label className="text-[10px] font-bold text-cyan-100/60 uppercase tracking-widest pl-1">Profile Picture (Optional)</label>
+                                    <div className="flex flex-col items-center gap-4">
+                                        <div className="relative group/avatar">
+                                            <div className="w-20 h-20 rounded-2xl bg-white/5 border-2 border-dashed border-white/20 flex items-center justify-center overflow-hidden transition-all group-hover/avatar:border-cyan-500/50">
+                                                {avatarUrl ? (
+                                                    <img src={avatarUrl} alt="Preview" className="w-full h-full object-cover" />
+                                                ) : (
+                                                    <User className="w-8 h-8 text-slate-500 group-hover/avatar:text-cyan-400 transition-colors" />
+                                                )}
+                                                <input
+                                                    type="file"
+                                                    onChange={handleAvatarChange}
+                                                    accept="image/*"
+                                                    className="absolute inset-0 opacity-0 cursor-pointer z-30"
+                                                />
+                                            </div>
+                                            <div className="absolute -bottom-2 -right-2 bg-cyan-600 rounded-lg p-1.5 shadow-lg border border-white/10 group-hover/avatar:scale-110 transition-transform">
+                                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" className="text-white"><path d="M12 5v14M5 12h14"></path></svg>
+                                            </div>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 text-center">Tap to upload your avatar</p>
                                     </div>
                                 </div>
                             )}

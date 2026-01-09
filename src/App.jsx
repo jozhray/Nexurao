@@ -24,11 +24,32 @@ function App() {
   const [user, setUser] = useState(null);
   const [showOnline, setShowOnline] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState({});
-  const [activeChat, setActiveChat] = useState(null); // { id: roomId, name: otherUserName, peerId: otherUserId }
+  const [activeChat, setActiveChat] = useState(() => {
+    const savedUser = localStorage.getItem('nexurao_user');
+    if (savedUser) {
+      try {
+        const userId = JSON.parse(savedUser).id;
+        const savedChat = localStorage.getItem(`nexurao_active_chat_${userId}`);
+        return savedChat ? JSON.parse(savedChat) : null;
+      } catch (e) { return null; }
+    }
+    return null;
+  }); // { id: roomId, name: otherUserName, peerId: otherUserId }
   const [showSidebar, setShowSidebar] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [missedCallUsers, setMissedCallUsers] = useState([]); // Array of unique caller IDs for missed calls
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [missedCallUsers, setMissedCallUsers] = useState(() => {
+    const savedUser = localStorage.getItem('nexurao_user');
+    if (savedUser) {
+      try {
+        const userId = JSON.parse(savedUser).id;
+        const saved = localStorage.getItem(`nexurao_missed_calls_${userId}`);
+        return saved ? JSON.parse(saved) : [];
+      } catch (e) { return []; }
+    }
+    return [];
+  }); // Array of unique caller IDs for missed calls
   const [searchViewMode, setSearchViewMode] = useState('history'); // 'history' or 'directory'
   const [previewUser, setPreviewUser] = useState(null);
   const [theme, setTheme] = useState('dark'); // 'dark' or 'light'
@@ -53,7 +74,17 @@ function App() {
   // Call Ringing State
   const [outgoingCall, setOutgoingCall] = useState(null); // { recipientId, status, startTime }
   const [isOutgoingMinimized, setIsOutgoingMinimized] = useState(false);
-  const [unreadCounts, setUnreadCounts] = useState({}); // { roomId: count }
+  const [unreadCounts, setUnreadCounts] = useState(() => {
+    const savedUser = localStorage.getItem('nexurao_user');
+    if (savedUser) {
+      try {
+        const userId = JSON.parse(savedUser).id;
+        const saved = localStorage.getItem(`nexurao_unread_counts_${userId}`);
+        return saved ? JSON.parse(saved) : {};
+      } catch (e) { return {}; }
+    }
+    return {};
+  }); // { roomId: count }
   const [currentChatUnreadCount, setCurrentChatUnreadCount] = useState(0);
   const [notificationPopup, setNotificationPopup] = useState(null); // { title, body, id, user, roomId }
   const [activeCallType, setActiveCallType] = useState('outgoing'); // 'incoming' or 'outgoing'
@@ -205,11 +236,19 @@ function App() {
 
   const handleLogout = () => {
     if (user) {
+      if (!showLogoutConfirm) {
+        setShowLogoutConfirm(true);
+        return;
+      }
+
       const userPresenceRef = ref(db, `presence/global/${user.id}`);
       remove(userPresenceRef);
+      const userId = user.id;
       setUser(null);
       setActiveChat(null);
       localStorage.removeItem('nexurao_user');
+      localStorage.removeItem(`nexurao_active_chat_${userId}`);
+      setShowLogoutConfirm(false);
       window.location.reload();
     }
   };
@@ -269,6 +308,39 @@ function App() {
   // Refs for tracking state inside listeners without triggering re-renders
   const activeChatRef = useRef(null);
   const notifiedMessagesRef = useRef(new Set());
+  const persistenceLoadedForRef = useRef(null);
+
+  // Load user-specific persistence on login
+  useEffect(() => {
+    if (!user) {
+      persistenceLoadedForRef.current = null;
+      return;
+    }
+
+    if (persistenceLoadedForRef.current !== user.id) {
+      console.log(`[Persistence] Loading state for user ${user.id}`);
+
+      // Load active chat
+      const savedChat = localStorage.getItem(`nexurao_active_chat_${user.id}`);
+      if (savedChat) {
+        try { setActiveChat(JSON.parse(savedChat)); } catch (e) { }
+      }
+
+      // Load unread counts
+      const savedCounts = localStorage.getItem(`nexurao_unread_counts_${user.id}`);
+      if (savedCounts) {
+        try { setUnreadCounts(JSON.parse(savedCounts)); } catch (e) { }
+      }
+
+      // Load missed calls
+      const savedMissed = localStorage.getItem(`nexurao_missed_calls_${user.id}`);
+      if (savedMissed) {
+        try { setMissedCallUsers(JSON.parse(savedMissed)); } catch (e) { }
+      }
+
+      persistenceLoadedForRef.current = user.id;
+    }
+  }, [user?.id]);
 
   // Update ref whenever activeChat changes
   useEffect(() => {
@@ -295,7 +367,27 @@ function App() {
     } else {
       setCurrentChatUnreadCount(0);
     }
-  }, [activeChat]);
+
+    // Persistence: activeChat (User Specific)
+    if (user && persistenceLoadedForRef.current === user.id) {
+      if (activeChat) {
+        localStorage.setItem(`nexurao_active_chat_${user.id}`, JSON.stringify(activeChat));
+      } else {
+        localStorage.removeItem(`nexurao_active_chat_${user.id}`);
+      }
+    }
+  }, [activeChat, user?.id]);
+
+  // Persistence: Notification counts (keyed by user ID)
+  useEffect(() => {
+    if (!user || persistenceLoadedForRef.current !== user.id) return;
+    localStorage.setItem(`nexurao_unread_counts_${user.id}`, JSON.stringify(unreadCounts));
+  }, [unreadCounts, user?.id]);
+
+  useEffect(() => {
+    if (!user || persistenceLoadedForRef.current !== user.id) return;
+    localStorage.setItem(`nexurao_missed_calls_${user.id}`, JSON.stringify(missedCallUsers));
+  }, [missedCallUsers, user?.id]);
 
   // Helper - Handle New Message Logic
   const handleNewMessage = (lastMsg, roomId) => {
@@ -823,6 +915,53 @@ function App() {
           </div>
         </div>
       </div>
+
+      {showSettings && (
+        <Settings
+          user={user}
+          onUpdateUser={(updated) => {
+            setUser(updated);
+            localStorage.setItem('nexurao_user', JSON.stringify(updated));
+          }}
+          onClose={() => setShowSettings(false)}
+          currentBackground={chatBackground}
+          onBackgroundChange={(bg) => {
+            setChatBackground(bg);
+            localStorage.setItem('nexurao_chat_background', JSON.stringify(bg));
+          }}
+        />
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setShowLogoutConfirm(false)} />
+          <div className="relative bg-slate-900 border border-white/10 rounded-2xl w-full max-w-[320px] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 bg-rose-500/10 border border-rose-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <LogOut className="w-8 h-8 text-rose-500" />
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2">Logout?</h3>
+              <p className="text-slate-400 text-sm mb-6">Are you sure you want to end your session?</p>
+
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={handleLogout}
+                  className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-rose-500/20"
+                >
+                  Confirm Logout
+                </button>
+                <button
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className="w-full py-3 bg-white/5 hover:bg-white/10 text-white font-medium rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {previewUser && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setPreviewUser(null)}>

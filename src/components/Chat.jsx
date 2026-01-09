@@ -442,7 +442,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                 const reader = new FileReader();
                 reader.onload = () => {
                     const dataUrl = reader.result;
-                    sendVoiceMessage(dataUrl);
+                    sendVoiceMessage(dataUrl, audioBlob.size);
                 };
                 reader.onerror = () => {
                     console.error('[Chat] Failed to convert audio to Base64');
@@ -475,13 +475,14 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         }
     };
 
-    const sendVoiceMessage = (audioDataUrl) => {
+    const sendVoiceMessage = (audioDataUrl, size) => {
         if (!roomId) return;
         // Stage voice message for confirmation
         setPendingAttachment({
             type: 'voice',
             audioUrl: audioDataUrl,
-            duration: recordingTime
+            duration: recordingTime,
+            size: size
         });
         setRecordingTime(0);
     };
@@ -657,7 +658,10 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                 <div className={`h-1 rounded-full overflow-hidden ${isMsgOwn ? 'bg-black/20' : 'bg-white/10'}`}>
                                     <div className={`h-full w-1/3 rounded-full ${isMsgOwn ? 'bg-white' : 'bg-cyan-500'}`} />
                                 </div>
-                                <p className={`text-xs font-mono ${attachmentSubText}`}>{formatTime(msg.duration || 0)}</p>
+                                <div className={`flex items-center justify-between text-[10px] font-mono ${attachmentSubText}`}>
+                                    <span>{formatTime(msg.duration || 0)}</span>
+                                    {msg.size && <span>{(msg.size / 1024).toFixed(1)} KB</span>}
+                                </div>
                             </div>
                         </div>
                         {renderCaption()}
