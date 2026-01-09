@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../lib/firebase';
 import { ref, push, onValue, serverTimestamp, query, limitToLast, set, get, remove, update } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Send, Image as ImageIcon, Plus, Check, Phone, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash2, RotateCcw, CornerUpLeft } from 'lucide-react';
+import { Send, Image as ImageIcon, Plus, Check, Phone, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash, RotateCcw, CornerUpLeft, Trash2 } from 'lucide-react';
 
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
 const isValidAvatarUrl = (url) => {
@@ -71,17 +71,13 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         return null;
     })();
 
-    useEffect(() => {
-        console.log('[Chat] effectivePeerId:', effectivePeerId, 'roomId:', roomId, 'userId:', user?.id);
-    }, [effectivePeerId, roomId, user?.id]);
+
 
     // Listen to peer's presence status
     useEffect(() => {
         if (!effectivePeerId) return;
-        console.log('[Chat] Listening to presence for:', effectivePeerId);
         const presenceRef = ref(db, `users/${effectivePeerId}`);
         const unsubscribe = onValue(presenceRef, (snapshot) => {
-            console.log('[Chat] Presence snapshot:', snapshot.exists(), snapshot.val());
             if (snapshot.exists()) {
                 const data = snapshot.val();
                 setPeerStatus({
@@ -164,10 +160,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         const chatRef = ref(db, `messages/${roomId}`);
         const q = query(chatRef, limitToLast(100));
 
-        console.log(`[Chat] Initializing messages load for room: ${roomId}`);
-
         const unsubscribe = onValue(q, (snapshot) => {
-            console.log('[Chat] Messages SDK snapshot received');
             sdkLoaded = true;
             if (snapshot.exists()) {
                 const data = snapshot.val();
@@ -186,7 +179,6 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
         const fetchMessagesREST = async () => {
             if (sdkLoaded) return;
-            console.warn('[Chat] SDK timeout/error for messages, trying REST...');
             try {
                 const response = await fetch(`https://crispconnect-default-rtdb.firebaseio.com/messages/${roomId}.json?orderBy="$key"&limitToLast=100`);
                 if (response.ok) {
@@ -197,9 +189,6 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                             ...msg
                         }));
                         setMessages(list.sort((a, b) => a.timestamp - b.timestamp));
-                        console.log('[Chat] REST messages fetch success');
-                    } else {
-                        setMessages([]);
                     }
                 }
             } catch (err) {
@@ -285,14 +274,11 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                     return;
                 }
 
-                console.log('[Chat] Clearing chat for user:', user.id, 'peer:', effectivePeerId);
-
                 // Update meta with clearedAt timestamp - separate from chat list
                 const metaRef = ref(db, `user_chat_meta/${user.id}/${effectivePeerId}`);
                 update(metaRef, {
                     clearedAt: serverTimestamp()
-                }).then(() => console.log('[Chat] Clear timestamp updated in meta'))
-                    .catch(e => console.error('[Chat] Clear update failed', e));
+                }).catch(e => console.error('[Chat] Clear update failed', e));
 
                 // Also update local state for immediate feedback
                 setChatClearedAt(Date.now());
@@ -376,17 +362,13 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             );
 
             await Promise.race([pushPromise, timeoutPromise]);
-            console.log('[Chat] Message sent via SDK');
         } catch (err) {
-            console.warn('[Chat] SDK push failed or timed out, trying REST POST...', err.message);
-
             try {
                 const response = await fetch(`https://crispconnect-default-rtdb.firebaseio.com/messages/${roomId}.json`, {
                     method: 'POST',
                     body: JSON.stringify(messageData)
                 });
                 if (response.ok) {
-                    console.log('[Chat] Message sent via REST POST');
                     // Manually update local state if REST succeeded but listener might be lagging
                     setMessages(prev => [...prev, { id: Date.now().toString(), ...messageData }]);
                 } else {
@@ -943,7 +925,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                 className="p-2 hover:bg-white/10 rounded-full text-cyan-400 hover:text-rose-400 transition-colors"
                                 title="Remove from Contacts"
                             >
-                                <UserMinus className="w-5 h-5" />
+                                <UserMinus className="retro-iridescent-orange" />
                             </button>
                         ) : (
                             <button
@@ -951,7 +933,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                 className="p-2 hover:bg-white/10 rounded-full hover:text-cyan-400 transition-colors"
                                 title="Add to Contacts"
                             >
-                                <UserPlus className="w-5 h-5" />
+                                <UserPlus className="retro-iridescent" />
                             </button>
                         )
                     )}
@@ -960,14 +942,14 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                         className="p-2 hover:bg-white/10 rounded-full hover:text-cyan-400 transition-colors"
                         title="Start Voice Call"
                     >
-                        <Phone className="w-5 h-5" />
+                        <Phone className="retro-iridescent" />
                     </button>
                     <button
                         onClick={handleClearChat}
                         className="p-2 hover:bg-white/10 rounded-full hover:text-rose-400 transition-colors"
                         title="Clear Chat"
                     >
-                        <Trash2 className="w-5 h-5" />
+                        <Trash className="retro-iridescent-orange" />
                     </button>
                 </div>
             </div>

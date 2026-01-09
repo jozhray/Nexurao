@@ -7,7 +7,6 @@ import VoiceCall from './components/VoiceCall';
 import UserSearch from './components/UserSearch';
 import IncomingCall from './components/IncomingCall';
 import Settings from './components/Settings';
-import WeatherEffects from './components/WeatherEffects';
 import { Phone, PhoneOff, Lock, MessageCircle, Settings as SettingsIcon, LogOut, Check, X, Sun, Moon, Minimize2, Maximize2, Users } from 'lucide-react';
 
 // Ringback sound for caller
@@ -93,11 +92,51 @@ function App() {
   const callTimeoutRef = useRef(null);
   const ringbackRef = useRef(null);
 
-  // Request Notification Permission
+  // Permissions and Event Handlers
   useEffect(() => {
+    // Request Notification Permission
     if ('Notification' in window && Notification.permission !== 'granted') {
       Notification.requestPermission();
     }
+
+    // Suppress global context menu for a more "app-like" experience
+    const preventContextMenu = (e) => {
+      // Allow context menu only on input/textarea if needed, 
+      // but generally suppression is desired for custom long-press apps
+      if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('contextmenu', preventContextMenu);
+    return () => window.removeEventListener('contextmenu', preventContextMenu);
+  }, []);
+
+  // Vibration Priming: satisfy browser's "user gesture" requirement for the entire session
+  useEffect(() => {
+    const enableVibration = () => {
+      try {
+        if (window.navigator?.vibrate) {
+          window.navigator.vibrate(0);
+        }
+      } catch (err) {
+        // Silently ignore priming failures
+      }
+      window.removeEventListener('touchstart', enableVibration);
+      window.removeEventListener('mousedown', enableVibration);
+      window.removeEventListener('pointerdown', enableVibration);
+      window.removeEventListener('click', enableVibration);
+    };
+    window.addEventListener('touchstart', enableVibration, { once: true });
+    window.addEventListener('mousedown', enableVibration, { once: true });
+    window.addEventListener('pointerdown', enableVibration, { once: true });
+    window.addEventListener('click', enableVibration, { once: true });
+    return () => {
+      window.removeEventListener('touchstart', enableVibration);
+      window.removeEventListener('mousedown', enableVibration);
+      window.removeEventListener('pointerdown', enableVibration);
+      window.removeEventListener('click', enableVibration);
+    };
   }, []);
 
   const sendNotification = (title, body, icon, tag) => {
@@ -131,10 +170,9 @@ function App() {
     }
   }, []);
 
-  // One-time cleanup: Remove blob URLs from all users in Firebase
+  // One-time cleanup: Remove blob URLs and legacy data
   useEffect(() => {
-    const cleanupBlobUrls = async () => {
-      console.log('[Cleanup] Starting blob URL cleanup...');
+    const cleanupLegacyData = async () => {
       try {
         // Clean users
         const usersRef = ref(db, 'users');
@@ -143,7 +181,6 @@ function App() {
           const users = snapshot.val();
           for (const [userId, userData] of Object.entries(users)) {
             if (userData.avatarUrl && (userData.avatarUrl.startsWith('blob:') || !isValidAvatarUrl(userData.avatarUrl))) {
-              console.log(`[Cleanup] Removing invalid avatarUrl for user ${userId}:`, userData.avatarUrl?.substring(0, 50));
               await update(ref(db, `users/${userId}`), { avatarUrl: null });
             }
           }
@@ -157,14 +194,13 @@ function App() {
             if (contacts && typeof contacts === 'object') {
               for (const [contactId, contactData] of Object.entries(contacts)) {
                 if (contactData?.avatarUrl && (contactData.avatarUrl.startsWith('blob:') || !isValidAvatarUrl(contactData.avatarUrl))) {
-                  console.log(`[Cleanup] Removing invalid avatarUrl from contact ${contactId}:`, contactData.avatarUrl?.substring(0, 50));
                   await update(ref(db, `user_contacts/${ownerId}/${contactId}`), { avatarUrl: null });
                 }
               }
             }
           }
         }
-        // Clean user_chats
+        // Clean user_chats (Remove blob URLs and legacy clearedAt)
         const chatsRef = ref(db, 'user_chats');
         const chatsSnap = await get(chatsRef);
         if (chatsSnap.exists()) {
@@ -172,20 +208,28 @@ function App() {
           for (const [ownerId, chats] of Object.entries(allChats)) {
             if (chats && typeof chats === 'object') {
               for (const [chatId, chatData] of Object.entries(chats)) {
+                const updates = {};
+                // Remove invalid avatars
                 if (chatData?.avatarUrl && (chatData.avatarUrl.startsWith('blob:') || !isValidAvatarUrl(chatData.avatarUrl))) {
-                  console.log(`[Cleanup] Removing invalid avatarUrl from chat ${chatId}:`, chatData.avatarUrl?.substring(0, 50));
-                  await update(ref(db, `user_chats/${ownerId}/${chatId}`), { avatarUrl: null });
+                  updates.avatarUrl = null;
+                }
+                // Remove legacy clearedAt (now in user_chat_meta)
+                if (chatData?.clearedAt !== undefined) {
+                  updates.clearedAt = null;
+                }
+
+                if (Object.keys(updates).length > 0) {
+                  await update(ref(db, `user_chats/${ownerId}/${chatId}`), updates);
                 }
               }
             }
           }
         }
-        console.log('[Cleanup] Blob URL cleanup complete');
       } catch (err) {
-        console.warn('[Cleanup] Failed to cleanup blob URLs:', err);
+        // Silent fail for cleanup in production
       }
     };
-    cleanupBlobUrls();
+    cleanupLegacyData();
   }, []);
 
   useEffect(() => {
@@ -318,7 +362,6 @@ function App() {
     }
 
     if (persistenceLoadedForRef.current !== user.id) {
-      console.log(`[Persistence] Loading state for user ${user.id}`);
 
       // Load active chat
       const savedChat = localStorage.getItem(`nexurao_active_chat_${user.id}`);
@@ -415,19 +458,6 @@ function App() {
 
         // Trigger In-App Popup
         // Skip popup if it's a missed call (the call history listener handles this popup locally)
-        if (lastMsg.type === 'system_call_missed') {
-          console.log("Skipping duplicate popup for missed call message");
-          return;
-        }
-
-        console.log("Triggering In-App Popup for msg:", lastMsg.id);
-        const senderUser = {
-          id: lastMsg.userId,
-          name: lastMsg.userName || 'User',
-          displayName: lastMsg.userName || 'User',
-          avatarUrl: null
-        };
-
         setNotificationPopup({
           title: lastMsg.userName || 'New Message',
           body: lastMsg.text || 'Sent a file',
@@ -692,7 +722,22 @@ function App() {
 
   return (
     <div className={`h-[100dvh] w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
-      <WeatherEffects theme={theme} />
+      {/* Hidden SVG Definitions for Retro Icons */}
+      <svg width="0" height="0" className="absolute invisible pointer-events-none">
+        <defs>
+          <linearGradient id="retro-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#06b6d4" />
+            <stop offset="50%" stopColor="#8b5cf6" />
+            <stop offset="100%" stopColor="#f97316" />
+          </linearGradient>
+          <linearGradient id="retro-gradient-orange" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#f59e0b" />
+            <stop offset="50%" stopColor="#f43f5e" />
+            <stop offset="100%" stopColor="#8b5cf6" />
+          </linearGradient>
+        </defs>
+      </svg>
+
       <div className="absolute inset-0 top-0 h-32 bg-[#00a884] z-0 hidden md:block"></div>
 
       <IncomingCall
@@ -816,15 +861,15 @@ function App() {
                   }}
                   title="Call"
                 >
-                  <Phone className="w-5 h-5" />
+                  <Phone className="retro-iridescent" />
                   {missedCallUsers.length > 0 && (
                     <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 h-4 min-w-[16px] flex items-center justify-center rounded-full shadow-sm ring-2 ring-[var(--wa-panel)]">
                       {missedCallUsers.length > 99 ? '99+' : missedCallUsers.length}
                     </span>
                   )}
                 </button>
-                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors" onClick={() => setShowSettings(true)} title="Settings"><SettingsIcon className="w-5 h-5" /></button>
-                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors" onClick={handleLogout} title="Logout"><LogOut className="w-5 h-5" /></button>
+                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors group/btn" onClick={() => setShowSettings(true)} title="Settings"><SettingsIcon className="retro-iridescent" /></button>
+                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors group/btn" onClick={handleLogout} title="Logout"><LogOut className="retro-iridescent" /></button>
               </div>
             </div>
 

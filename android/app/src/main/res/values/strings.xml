@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nexurao</string>
+    <string name="title_activity_main">Nexurao</string>
+    <string name="package_name">com.nexurao.app</string>
+    <string name="custom_url_scheme">com.nexurao.app</string>
+</resources>

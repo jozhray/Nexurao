@@ -147,7 +147,7 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                             : 'text-[#8696a0] hover:bg-white/5'
                             }`}
                     >
-                        <Pencil className="w-4 h-4 opacity-90" />
+                        <Pencil className="retro-iridescent retro-icon-sm" />
                         Edit Profile
                     </button>
                     <button
@@ -157,7 +157,7 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                             : 'text-[#8696a0] hover:bg-white/5'
                             }`}
                     >
-                        <Image className="w-4 h-4 opacity-90" />
+                        <Image className="retro-iridescent retro-icon-sm" />
                         Chat Background
                     </button>
                 </div>

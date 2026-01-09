@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { ref, onValue, set, remove, get, query, limitToLast } from 'firebase/database';
-import { Search, Trash2, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Trash, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
 const isValidAvatarUrl = (url) => {
@@ -35,6 +35,42 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
     // Confirmation modal state: { type: 'delete' | 'remove' | 'call', user: {...}, action: fn }
     const [confirmAction, setConfirmAction] = useState(null);
 
+    // Active actions overlay state
+    const [actionsUserId, setActionsUserId] = useState(null);
+    const longPressTimerRef = useRef(null);
+    const isLongPressActiveRef = useRef(false);
+
+    const handlePressStart = (e, userId) => {
+        isLongPressActiveRef.current = false;
+        // Clear any existing timer
+        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+
+        longPressTimerRef.current = setTimeout(() => {
+            setActionsUserId(userId);
+            isLongPressActiveRef.current = true;
+            // Vibrate if available (haptic feedback)
+            try {
+                if (window.navigator?.vibrate) {
+                    window.navigator.vibrate(50);
+                }
+            } catch (err) {
+                // Ignore vibration failures (e.g. intervention)
+            }
+        }, 600); // 600ms for long press
+    };
+
+    const handlePressEnd = () => {
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    };
+
+    // Clear actions on view mode or search change
+    useEffect(() => {
+        setActionsUserId(null);
+    }, [viewMode, searchTerm]);
+
     // Auto-focus search input when switching to directory mode
     useEffect(() => {
         if (viewMode === 'directory' && searchInputRef.current) {
@@ -42,18 +78,18 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
         }
     }, [viewMode]);
 
-    console.log('[UserSearch] Render - currentUser:', currentUser?.id, 'allUsers:', allUsers.length);
+
 
     // Load All Users with SDK + REST Fallback
     useEffect(() => {
         let sdkLoaded = false;
         const usersRef = ref(db, 'users');
 
-        console.log('[UserSearch] Initializing users load...');
+
 
         // SDK Listener
         const unsubscribe = onValue(usersRef, (snapshot) => {
-            console.log('[UserSearch] Users SDK snapshot received');
+
             sdkLoaded = true;
             if (snapshot.exists()) {
                 setAllUsers(Object.values(snapshot.val()).map(sanitizeUser));
@@ -69,13 +105,13 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
         // REST Fallback Function
         const fetchUsersREST = async () => {
             if (sdkLoaded) return;
-            console.warn('[UserSearch] SDK timeout/error for users, trying REST...');
+
             try {
                 const response = await fetch('https://crispconnect-default-rtdb.firebaseio.com/users.json');
                 if (response.ok) {
                     const data = await response.json();
                     if (data) {
-                        console.log('[UserSearch] REST users fetch success');
+
                         setAllUsers(Object.values(data).map(sanitizeUser));
                     }
                     setLoading(false);
@@ -119,7 +155,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
 
         const fetchHistoryREST = async () => {
             if (sdkLoaded) return;
-            console.warn('[UserSearch] SDK timeout/error for history, trying REST...');
+
             try {
                 const response = await fetch(`https://crispconnect-default-rtdb.firebaseio.com/user_chats/${currentUser.id}.json`);
                 if (response.ok) {
@@ -320,17 +356,16 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
             const ids = [currentUser.id, otherUser.id].sort();
             const roomId = `dm_${ids[0]}_${ids[1]}`;
             const messages = messagesByRoom[roomId] || [];
-            console.log('[UserSearch] Searching for term:', searchTerm, 'in room:', roomId);
-            console.log('[UserSearch] Messages in room:', messages.length);
+
             // Find ALL matching messages
             const matches = messages.filter(m => m.text?.toLowerCase().includes(searchTerm.toLowerCase()));
             matchingMsgIds = matches.map(m => m.id);
-            console.log('[UserSearch] Found', matchingMsgIds.length, 'matching messages');
+
         }
 
         // Just start the chat UI without writing to DB yet
         // Pass all matching IDs and the search term for navigation
-        console.log('[UserSearch] Starting chat with matchingMsgIds:', matchingMsgIds);
+
         setSearchTerm('');
         onStartChat(otherUser, allowCall, matchingMsgIds.length > 0 ? matchingMsgIds[0] : null, matchingMsgIds, currentSearchTerm);
     };
@@ -519,8 +554,23 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                             contactUsers.map(user => (
                                                 <div
                                                     key={`contact-${user.id}`}
-                                                    onClick={() => handleSelectUser(user)}
-                                                    className="flex items-center px-4 hover:bg-[var(--wa-panel)] cursor-pointer group transition-colors border-b border-[var(--wa-border)]/30 last:border-b-0"
+                                                    onMouseDown={(e) => handlePressStart(e, user.id)}
+                                                    onMouseUp={handlePressEnd}
+                                                    onMouseLeave={handlePressEnd}
+                                                    onTouchStart={(e) => handlePressStart(e, user.id)}
+                                                    onTouchEnd={handlePressEnd}
+                                                    onClick={() => {
+                                                        if (isLongPressActiveRef.current) {
+                                                            isLongPressActiveRef.current = false;
+                                                            return;
+                                                        }
+                                                        if (actionsUserId === user.id) {
+                                                            setActionsUserId(null);
+                                                        } else if (!actionsUserId) {
+                                                            handleSelectUser(user);
+                                                        }
+                                                    }}
+                                                    className="flex items-center px-4 hover:bg-[var(--wa-panel)] cursor-pointer group transition-colors border-b border-[var(--wa-border)]/30 last:border-b-0 relative"
                                                     style={{ gap: '2px' }}
                                                 >
                                                     <div className="shrink-0 py-2">
@@ -536,22 +586,43 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                                         <h3 className="text-[15px] font-normal text-[var(--wa-text)] truncate">{user.displayName || user.name}</h3>
                                                         <p className="text-[11px] text-[var(--wa-text-muted)] truncate">@{user.name}</p>
                                                     </div>
-                                                    <div className="flex items-center gap-1">
-                                                        <button
-                                                            onClick={(e) => handleQuickCall(e, user)}
-                                                            className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
-                                                            title="Call"
+                                                    {/* Action Overlay */}
+                                                    {actionsUserId === user.id && (
+                                                        <div
+                                                            className="absolute inset-0 bg-[var(--wa-panel)]/95 z-40 flex items-stretch animate-in fade-in zoom-in-95 duration-200 backdrop-blur-sm"
+                                                            onClick={(e) => e.stopPropagation()}
                                                         >
-                                                            <Phone className="w-5 h-5" />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => handleRemoveContact(e, user.id)}
-                                                            className="p-2 text-[#8696a0] hover:text-rose-500 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
-                                                            title="Remove Contact"
-                                                        >
-                                                            <UserMinus className="w-5 h-5" />
-                                                        </button>
-                                                    </div>
+                                                            <div className="flex-1 flex items-center justify-around px-2">
+                                                                <button
+                                                                    onClick={() => { handleSelectUser(user); setActionsUserId(null); }}
+                                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                                >
+                                                                    <MessageCircle className="retro-iridescent" />
+                                                                    <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Chat</span>
+                                                                </button>
+                                                                <button
+                                                                    onClick={(e) => { handleQuickCall(e, user); setActionsUserId(null); }}
+                                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                                >
+                                                                    <Phone className="retro-iridescent" />
+                                                                    <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Call</span>
+                                                                </button>
+                                                                <button
+                                                                    onClick={(e) => { handleRemoveContact(e, user.id); setActionsUserId(null); }}
+                                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                                >
+                                                                    <UserMinus className="retro-iridescent-orange" />
+                                                                    <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter">Remove</span>
+                                                                </button>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => setActionsUserId(null)}
+                                                                className="px-4 flex items-center justify-center border-l border-white/5 hover:bg-white/5 text-[#8696a0]"
+                                                            >
+                                                                <X className="w-5 h-5" />
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))
                                         ) : (
@@ -582,9 +653,25 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                     displayedUsers.map(user => (
                         <div
                             key={user.id}
-                            onClick={() => handleSelectUser(user)}
-                            className="flex items-center px-4 hover:bg-[var(--wa-panel)] cursor-pointer group transition-colors border-b border-[var(--wa-border)]/50"
+                            onMouseDown={(e) => handlePressStart(e, user.id)}
+                            onMouseUp={handlePressEnd}
+                            onMouseLeave={handlePressEnd}
+                            onTouchStart={(e) => handlePressStart(e, user.id)}
+                            onTouchEnd={handlePressEnd}
+                            onContextMenu={(e) => e.preventDefault()}
+                            className="flex items-center px-4 hover:bg-[var(--wa-panel)] active:bg-[var(--wa-panel)]/70 cursor-pointer group transition-colors border-b border-[var(--wa-border)]/50 relative"
                             style={{ gap: '2px' }}
+                            onClick={() => {
+                                if (isLongPressActiveRef.current) {
+                                    isLongPressActiveRef.current = false;
+                                    return;
+                                }
+                                if (actionsUserId === user.id) {
+                                    setActionsUserId(null);
+                                } else if (!actionsUserId) {
+                                    handleSelectUser(user);
+                                }
+                            }}
                         >
                             <div
                                 className="shrink-0 py-3"
@@ -645,93 +732,82 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                             return null;
                                         })()}
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                        {/* Quick action buttons for contacts */}
-                                        {viewMode === 'contacts' && (
-                                            <>
-                                                <button
-                                                    onClick={() => handleSelectUser(user)}
-                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
-                                                    title="Chat"
-                                                >
-                                                    <MessageCircle className="w-6 h-6" />
-                                                </button>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        // Start chat and trigger call
-                                                        onStartChat(user);
-                                                        if (onStartCall) {
-                                                            setTimeout(() => onStartCall(user), 200);
-                                                        }
-                                                    }}
-                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
-                                                    title="Call"
-                                                >
-                                                    <Phone className="w-6 h-6" />
-                                                </button>
-                                            </>
-                                        )}
-                                        {/* Call Button for history view or history users in directory - comes first */}
-                                        {(viewMode === 'history' || (viewMode === 'directory' && !searchTerm) || (viewMode === 'directory' && chatHistoryIds.includes(user.id))) && (
-                                            <button
-                                                onClick={(e) => handleQuickCall(e, user)}
-                                                className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
-                                                title="Call"
-                                            >
-                                                <Phone className="w-6 h-6" />
-                                            </button>
-                                        )}
-                                        {viewMode === 'call' && (
-                                            <>
-                                                <button
-                                                    onClick={(e) => handleQuickCall(e, user)}
-                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
-                                                    title="Call"
-                                                >
-                                                    <Phone className="w-6 h-6" />
-                                                </button>
-                                                {getCallsForUser(user.id).length > 0 && (
-                                                    <button
-                                                        onClick={(e) => handleShowCallHistory(e, user)}
-                                                        className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
-                                                        title="View Call History"
-                                                    >
-                                                        <Info className="w-6 h-6" />
-                                                    </button>
-                                                )}
-                                            </>
-                                        )}
-                                        {/* Add/Remove Contact Button */}
-                                        {isContact(user.id) ? (
-                                            <button
-                                                onClick={(e) => handleRemoveContact(e, user.id)}
-                                                className="p-2 text-[#00a884] hover:text-rose-500 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
-                                                title="Remove from Contacts"
-                                            >
-                                                <UserMinus className="w-6 h-6" />
-                                            </button>
-                                        ) : (
-                                            <button
-                                                onClick={(e) => handleAddContact(e, user)}
-                                                className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
-                                                title="Add to Contacts"
-                                            >
-                                                <UserPlus className="w-6 h-6" />
-                                            </button>
-                                        )}
-                                        {/* Delete Button for history view - comes last */}
-                                        {(viewMode === 'history' || (viewMode === 'directory' && !searchTerm) || (viewMode === 'directory' && chatHistoryIds.includes(user.id))) && (
-                                            <button
-                                                onClick={(e) => handleDeleteChat(e, user.id)}
-                                                className="p-2 text-[#8696a0] hover:text-rose-500 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
-                                                title="Delete Chat"
-                                            >
-                                                <Trash2 className="w-6 h-6" />
-                                            </button>
-                                        )}
-                                    </div>
                                 </div>
+                                {/* Action Overlay */}
+                                {actionsUserId === user.id && (
+                                    <div
+                                        className="absolute inset-0 bg-[var(--wa-panel)]/95 z-40 flex items-stretch animate-in fade-in zoom-in-95 duration-200 backdrop-blur-md"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <div className="flex-1 flex items-center justify-around px-2">
+                                            {/* Chat Button */}
+                                            <button
+                                                onClick={() => { handleSelectUser(user); setActionsUserId(null); }}
+                                                className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                            >
+                                                <MessageCircle className="retro-iridescent" />
+                                                <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Chat</span>
+                                            </button>
+
+                                            {/* Call Button */}
+                                            <button
+                                                onClick={(e) => { handleQuickCall(e, user); setActionsUserId(null); }}
+                                                className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                            >
+                                                <Phone className="retro-iridescent" />
+                                                <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Call</span>
+                                            </button>
+
+                                            {/* Add/Remove Contact */}
+                                            {isContact(user.id) ? (
+                                                <button
+                                                    onClick={(e) => { handleRemoveContact(e, user.id); setActionsUserId(null); }}
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                >
+                                                    <UserMinus className="retro-iridescent-orange" />
+                                                    <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter">Remove</span>
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={(e) => { handleAddContact(e, user); setActionsUserId(null); }}
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                >
+                                                    <UserPlus className="retro-iridescent" />
+                                                    <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Add</span>
+                                                </button>
+                                            )}
+
+                                            {/* Info Button (if needed) */}
+                                            {viewMode === 'call' && getCallsForUser(user.id).length > 0 && (
+                                                <button
+                                                    onClick={(e) => { handleShowCallHistory(e, user); setActionsUserId(null); }}
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95"
+                                                >
+                                                    <Info className="w-5 h-5 text-[#8696a0]" />
+                                                    <span className="text-[9px] text-[#8696a0] font-bold uppercase tracking-tighter">Info</span>
+                                                </button>
+                                            )}
+
+                                            {/* Delete Button (for history) */}
+                                            {(viewMode === 'history' || (viewMode === 'directory' && !searchTerm) || (viewMode === 'directory' && chatHistoryIds.includes(user.id))) && (
+                                                <button
+                                                    onClick={(e) => { handleDeleteChat(e, user.id); setActionsUserId(null); }}
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                >
+                                                    <Trash className="retro-iridescent-orange" />
+                                                    <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter">Delete</span>
+                                                </button>
+                                            )}
+                                        </div>
+                                        {/* Close Overlay */}
+                                        <button
+                                            onClick={() => setActionsUserId(null)}
+                                            className="px-4 flex items-center justify-center border-l border-white/5 hover:bg-white/5 text-[#8696a0] transition-colors"
+                                        >
+                                            <X className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))
@@ -751,189 +827,193 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
             </div>
 
             {/* Profile Preview Modal */}
-            {previewUser && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
-                    onClick={() => setPreviewUser(null)}
-                >
+            {
+                previewUser && (
                     <div
-                        className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full animate-in zoom-in-95 duration-200"
-                        onClick={(e) => e.stopPropagation()}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+                        onClick={() => setPreviewUser(null)}
                     >
-                        <div className="relative aspect-square w-full bg-[#111b21]">
-                            {isValidAvatarUrl(previewUser.avatarUrl) ? (
-                                <img src={previewUser.avatarUrl} alt={previewUser.displayName || previewUser.name} className="w-full h-full object-cover" />
-                            ) : (
-                                <div className="w-full h-full flex items-center justify-center text-8xl text-white font-bold bg-slate-700">
-                                    {(previewUser.displayName || previewUser.name)?.[0]?.toUpperCase()}
+                        <div
+                            className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full animate-in zoom-in-95 duration-200"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="relative aspect-square w-full bg-[#111b21]">
+                                {isValidAvatarUrl(previewUser.avatarUrl) ? (
+                                    <img src={previewUser.avatarUrl} alt={previewUser.displayName || previewUser.name} className="w-full h-full object-cover" />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-8xl text-white font-bold bg-slate-700">
+                                        {(previewUser.displayName || previewUser.name)?.[0]?.toUpperCase()}
+                                    </div>
+                                )}
+                                <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/40 to-transparent">
+                                    <h2 className="text-white text-lg font-medium drop-shadow-md">{previewUser.displayName || previewUser.name}</h2>
+                                    <p className="text-white/60 text-xs drop-shadow-md">@{previewUser.name}</p>
                                 </div>
-                            )}
-                            <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/40 to-transparent">
-                                <h2 className="text-white text-lg font-medium drop-shadow-md">{previewUser.displayName || previewUser.name}</h2>
-                                <p className="text-white/60 text-xs drop-shadow-md">@{previewUser.name}</p>
+                                <button
+                                    onClick={() => setPreviewUser(null)}
+                                    className="absolute top-4 right-4 text-white/80 hover:text-white transition-colors"
+                                >
+                                    <X className="w-6 h-6" />
+                                </button>
                             </div>
-                            <button
-                                onClick={() => setPreviewUser(null)}
-                                className="absolute top-4 right-4 text-white/80 hover:text-white transition-colors"
-                            >
-                                <X className="w-6 h-6" />
-                            </button>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Confirmation Modal */}
-            {confirmAction && (
-                <div
-                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
-                    onClick={() => setConfirmAction(null)}
-                >
+            {
+                confirmAction && (
                     <div
-                        className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full animate-in zoom-in-95 duration-200 p-6"
-                        onClick={(e) => e.stopPropagation()}
+                        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+                        onClick={() => setConfirmAction(null)}
                     >
-                        <div className="text-center">
-                            {/* Icon based on action type */}
-                            <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4 ${confirmAction.type === 'call' ? 'bg-[#00a884]/20' :
-                                confirmAction.type === 'delete' ? 'bg-rose-500/20' : 'bg-rose-500/20'
-                                }`}>
-                                {confirmAction.type === 'call' && <Phone className="w-8 h-8 text-[#00a884]" />}
-                                {confirmAction.type === 'delete' && <Trash2 className="w-8 h-8 text-rose-500" />}
-                                {confirmAction.type === 'remove' && <UserMinus className="w-8 h-8 text-rose-500" />}
-                            </div>
+                        <div
+                            className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full animate-in zoom-in-95 duration-200 p-6"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="text-center">
+                                {/* Icon based on action type */}
+                                <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4 ${confirmAction.type === 'call' ? 'bg-[#00a884]/20' :
+                                    confirmAction.type === 'delete' ? 'bg-rose-500/20' : 'bg-rose-500/20'
+                                    }`}>
+                                    {confirmAction.type === 'call' && <Phone className="w-8 h-8 text-[#00a884]" />}
+                                    {confirmAction.type === 'delete' && <Trash2 className="w-8 h-8 text-rose-500" />}
+                                    {confirmAction.type === 'remove' && <UserMinus className="w-8 h-8 text-rose-500" />}
+                                </div>
 
-                            {/* Title */}
-                            <h3 className="text-white text-lg font-medium mb-2">
-                                {confirmAction.type === 'call' && `Call ${confirmAction.user?.displayName || confirmAction.user?.name}?`}
-                                {confirmAction.type === 'delete' && 'Delete Chat?'}
-                                {confirmAction.type === 'remove' && 'Remove Contact?'}
-                            </h3>
+                                {/* Title */}
+                                <h3 className="text-white text-lg font-medium mb-2">
+                                    {confirmAction.type === 'call' && `Call ${confirmAction.user?.displayName || confirmAction.user?.name}?`}
+                                    {confirmAction.type === 'delete' && 'Delete Chat?'}
+                                    {confirmAction.type === 'remove' && 'Remove Contact?'}
+                                </h3>
 
-                            {/* Description */}
-                            <p className="text-[#8696a0] text-sm mb-6">
-                                {confirmAction.type === 'call' && 'This will open a chat and start a voice call.'}
-                                {confirmAction.type === 'delete' && `Are you sure you want to delete your chat with ${confirmAction.user?.displayName || confirmAction.user?.name}? This cannot be undone.`}
-                                {confirmAction.type === 'remove' && `Are you sure you want to remove ${confirmAction.user?.displayName || confirmAction.user?.name} from your contacts?`}
-                            </p>
+                                {/* Description */}
+                                <p className="text-[#8696a0] text-sm mb-6">
+                                    {confirmAction.type === 'call' && 'This will open a chat and start a voice call.'}
+                                    {confirmAction.type === 'delete' && `Are you sure you want to delete your chat with ${confirmAction.user?.displayName || confirmAction.user?.name}? This cannot be undone.`}
+                                    {confirmAction.type === 'remove' && `Are you sure you want to remove ${confirmAction.user?.displayName || confirmAction.user?.name} from your contacts?`}
+                                </p>
 
-                            {/* Buttons */}
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={() => setConfirmAction(null)}
-                                    className="flex-1 py-2.5 px-4 rounded-lg bg-[#3b4a54] text-white font-medium hover:bg-[#4a5b66] transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={confirmAction.action}
-                                    className={`flex-1 py-2.5 px-4 rounded-lg font-medium transition-colors ${confirmAction.type === 'call'
-                                        ? 'bg-[#00a884] text-white hover:bg-[#008f70]'
-                                        : 'bg-rose-500 text-white hover:bg-rose-600'
-                                        }`}
-                                >
-                                    {confirmAction.type === 'call' ? 'Call' : confirmAction.type === 'delete' ? 'Delete' : 'Remove'}
-                                </button>
+                                {/* Buttons */}
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => setConfirmAction(null)}
+                                        className="flex-1 py-2.5 px-4 rounded-lg bg-[#3b4a54] text-white font-medium hover:bg-[#4a5b66] transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={confirmAction.action}
+                                        className={`flex-1 py-2.5 px-4 rounded-lg font-medium transition-colors ${confirmAction.type === 'call'
+                                            ? 'bg-[#00a884] text-white hover:bg-[#008f70]'
+                                            : 'bg-rose-500 text-white hover:bg-rose-600'
+                                            }`}
+                                    >
+                                        {confirmAction.type === 'call' ? 'Call' : confirmAction.type === 'delete' ? 'Delete' : 'Remove'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Call History Detail Modal */}
-            {callHistoryDetail && (
-                <div
-                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
-                    onClick={() => setCallHistoryDetail(null)}
-                >
+            {
+                callHistoryDetail && (
                     <div
-                        className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full animate-in zoom-in-95 duration-200"
-                        onClick={(e) => e.stopPropagation()}
+                        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+                        onClick={() => setCallHistoryDetail(null)}
                     >
-                        {/* Header */}
-                        <div className="p-4 border-b border-[var(--wa-border)] flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-full bg-slate-600 flex items-center justify-center text-white font-semibold text-xl shrink-0">
-                                {isValidAvatarUrl(callHistoryDetail.user?.avatarUrl) ? (
-                                    <img src={callHistoryDetail.user.avatarUrl} alt="" className="w-full h-full rounded-full object-cover" />
-                                ) : (
-                                    (callHistoryDetail.user?.displayName || callHistoryDetail.user?.name)?.[0]?.toUpperCase()
-                                )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <h3 className="text-white text-lg font-medium truncate">
-                                    {callHistoryDetail.user?.displayName || callHistoryDetail.user?.name}
-                                </h3>
-                                <p className="text-[#8696a0] text-sm">{callHistoryDetail.calls.length} call{callHistoryDetail.calls.length !== 1 ? 's' : ''}</p>
-                            </div>
-                            <button
-                                onClick={() => setCallHistoryDetail(null)}
-                                className="p-2 text-[#8696a0] hover:text-white transition-colors"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-
-                        {/* Call List */}
-                        <div className="max-h-80 overflow-y-auto">
-                            {callHistoryDetail.calls.map((call, index) => (
-                                <div key={call.id || index} className="px-4 py-3 border-b border-[var(--wa-border)]/50 flex items-center gap-3">
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${call.type === 'incoming' ? 'bg-green-500/20 text-green-400' :
-                                        call.type === 'missed' ? 'bg-rose-500/20 text-rose-400' :
-                                            'bg-[#00a884]/20 text-[#00a884]'
-                                        }`}>
-                                        <Phone className="w-5 h-5" />
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className={`text-sm font-medium ${call.type === 'incoming' ? 'text-green-400' :
-                                                call.type === 'missed' ? 'text-rose-400' :
-                                                    'text-[#00a884]'
-                                                }`}>
-                                                {call.type === 'incoming' ? '↙ Incoming' : call.type === 'missed' ? '✗ Missed' : '↗ Outgoing'}
-                                            </span>
-                                            {call.duration > 0 && (
-                                                <span className="text-xs text-[var(--wa-text-muted)]">
-                                                    {formatCallDuration(call.duration)}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <p className="text-xs text-[var(--wa-text-muted)]">{formatCallTime(call.timestamp)}</p>
-                                    </div>
+                        <div
+                            className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full animate-in zoom-in-95 duration-200"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Header */}
+                            <div className="p-4 border-b border-[var(--wa-border)] flex items-center gap-3">
+                                <div className="w-12 h-12 rounded-full bg-slate-600 flex items-center justify-center text-white font-semibold text-xl shrink-0">
+                                    {isValidAvatarUrl(callHistoryDetail.user?.avatarUrl) ? (
+                                        <img src={callHistoryDetail.user.avatarUrl} alt="" className="w-full h-full rounded-full object-cover" />
+                                    ) : (
+                                        (callHistoryDetail.user?.displayName || callHistoryDetail.user?.name)?.[0]?.toUpperCase()
+                                    )}
                                 </div>
-                            ))}
-                        </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="text-white text-lg font-medium truncate">
+                                        {callHistoryDetail.user?.displayName || callHistoryDetail.user?.name}
+                                    </h3>
+                                    <p className="text-[#8696a0] text-sm">{callHistoryDetail.calls.length} call{callHistoryDetail.calls.length !== 1 ? 's' : ''}</p>
+                                </div>
+                                <button
+                                    onClick={() => setCallHistoryDetail(null)}
+                                    className="p-2 text-[#8696a0] hover:text-white transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
 
-                        {/* Footer Actions */}
-                        <div className="p-4 border-t border-[var(--wa-border)] flex gap-3">
-                            <button
-                                onClick={() => {
-                                    setCallHistoryDetail(null);
-                                    handleSelectUser(callHistoryDetail.user, false);
-                                }}
-                                className="flex-1 py-2.5 px-4 rounded-lg bg-[#3b4a54] text-white font-medium hover:bg-[#4a5b66] transition-colors flex items-center justify-center gap-2"
-                            >
-                                <MessageCircle className="w-4 h-4" />
-                                Message
-                            </button>
-                            <button
-                                onClick={() => {
-                                    const user = callHistoryDetail.user;
-                                    setCallHistoryDetail(null);
-                                    onStartChat(user);
-                                    if (onStartCall) {
-                                        setTimeout(() => onStartCall(user), 200);
-                                    }
-                                }}
-                                className="flex-1 py-2.5 px-4 rounded-lg bg-[#00a884] text-white font-medium hover:bg-[#008f70] transition-colors flex items-center justify-center gap-2"
-                            >
-                                <Phone className="w-4 h-4" />
-                                Call
-                            </button>
+                            {/* Call List */}
+                            <div className="max-h-80 overflow-y-auto">
+                                {callHistoryDetail.calls.map((call, index) => (
+                                    <div key={call.id || index} className="px-4 py-3 border-b border-[var(--wa-border)]/50 flex items-center gap-3">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${call.type === 'incoming' ? 'bg-green-500/20 text-green-400' :
+                                            call.type === 'missed' ? 'bg-rose-500/20 text-rose-400' :
+                                                'bg-[#00a884]/20 text-[#00a884]'
+                                            }`}>
+                                            <Phone className="w-5 h-5" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className={`text-sm font-medium ${call.type === 'incoming' ? 'text-green-400' :
+                                                    call.type === 'missed' ? 'text-rose-400' :
+                                                        'text-[#00a884]'
+                                                    }`}>
+                                                    {call.type === 'incoming' ? '↙ Incoming' : call.type === 'missed' ? '✗ Missed' : '↗ Outgoing'}
+                                                </span>
+                                                {call.duration > 0 && (
+                                                    <span className="text-xs text-[var(--wa-text-muted)]">
+                                                        {formatCallDuration(call.duration)}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-[var(--wa-text-muted)]">{formatCallTime(call.timestamp)}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Footer Actions */}
+                            <div className="p-4 border-t border-[var(--wa-border)] flex gap-3">
+                                <button
+                                    onClick={() => {
+                                        setCallHistoryDetail(null);
+                                        handleSelectUser(callHistoryDetail.user, false);
+                                    }}
+                                    className="flex-1 py-2.5 px-4 rounded-lg bg-[#3b4a54] text-white font-medium hover:bg-[#4a5b66] transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <MessageCircle className="w-4 h-4" />
+                                    Message
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        const user = callHistoryDetail.user;
+                                        setCallHistoryDetail(null);
+                                        onStartChat(user);
+                                        if (onStartCall) {
+                                            setTimeout(() => onStartCall(user), 200);
+                                        }
+                                    }}
+                                    className="flex-1 py-2.5 px-4 rounded-lg bg-[#00a884] text-white font-medium hover:bg-[#008f70] transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <Phone className="w-4 h-4" />
+                                    Call
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )
-            }
-        </div >
+                )}
+        </div>
     );
 }
