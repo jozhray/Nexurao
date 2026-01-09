@@ -436,7 +436,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
     };
 
     return (
-        <div className="h-full flex flex-col bg-[var(--wa-bg)]">
+        <div className="h-full min-h-0 flex flex-col bg-[var(--wa-bg)]">
             {/* Header */}
             <div className="p-2 border-b border-[var(--wa-border)] shrink-0 flex items-center gap-2">
                 {(viewMode === 'directory' || viewMode === 'call' || viewMode === 'contacts') && (

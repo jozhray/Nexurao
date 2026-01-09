@@ -687,7 +687,7 @@ function App() {
         <div className="w-full h-full max-w-[1600px] bg-transparent flex flex-col md:flex-row shadow-2xl overflow-hidden rounded-none md:rounded-xl border-none md:border border-[#323b42]">
 
           {/* LEFT PANEL */}
-          <div className={`flex flex-col border-r border-[#323b42] h-full w-full md:w-[35%] lg:w-[30%] min-w-[300px] ${activeChat ? 'hidden md:flex' : 'flex'} ${theme === 'light' ? 'bg-white' : 'bg-[#111b21]'}`}>
+          <div className={`flex flex-col border-r border-[#323b42] h-full min-h-0 w-full md:w-[35%] lg:w-[30%] min-w-[300px] ${activeChat ? 'hidden md:flex' : 'flex'} ${theme === 'light' ? 'bg-white' : 'bg-[#111b21]'}`}>
             <div className="h-[60px] bg-[var(--wa-panel)] flex items-center justify-between px-4 border-b border-[var(--wa-border)] shrink-0">
               <div className="flex items-center gap-3">
                 <div
