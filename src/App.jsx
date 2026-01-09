@@ -599,7 +599,7 @@ function App() {
   }
 
   return (
-    <div className={`h-screen w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
+    <div className={`h-[100dvh] w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
       <WeatherEffects theme={theme} />
       <div className="absolute inset-0 top-0 h-32 bg-[#00a884] z-0 hidden md:block"></div>
 

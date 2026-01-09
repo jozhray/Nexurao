@@ -1094,7 +1094,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             )}
 
             {/* Input Area */}
-            <div className="px-6 py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative">
+            <div className="px-3 sm:px-6 py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative min-h-[70px] flex items-center">
                 {/* Subtle top glow line */}
                 <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
 

@@ -44,7 +44,7 @@ body {
   background-color: var(--wa-bg);
   color: var(--wa-text);
   overflow: hidden;
-  height: 100vh;
+  height: 100dvh;
   width: 100vw;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
