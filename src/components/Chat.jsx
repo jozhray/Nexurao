@@ -918,7 +918,8 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             {/* Messages */}
             <div
                 ref={scrollRef}
-                className="flex-1 overflow-y-auto overflow-x-hidden px-[10px] pt-[10px] pb-4 flex flex-col gap-3 custom-scrollbar"
+                className="flex-1 overflow-y-auto overflow-x-hidden px-[10px] pt-[10px] pb-8 flex flex-col gap-3 custom-scrollbar"
+                style={{ WebkitOverflowScrolling: 'touch' }}
             >
                 {messages.map((msg, index) => {
                     const isOwn = msg.userId === user.id;
@@ -1094,7 +1095,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             )}
 
             {/* Input Area */}
-            <div className="px-3 sm:px-6 py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative min-h-[70px] flex items-center">
+            <div className="px-2 sm:px-6 py-1.5 sm:py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative flex items-center">
                 {/* Subtle top glow line */}
                 <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
 
@@ -1117,26 +1118,26 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                     </div>
                 ) : (
                     /* Normal Input UI */
-                    <div className="flex items-center gap-1 sm:gap-2 max-w-[1400px] mx-auto w-full">
-                        <div className="flex items-center gap-0.5 sm:gap-1">
+                    <div className="flex items-center gap-0.5 sm:gap-2 max-w-[1400px] mx-auto w-full">
+                        <div className="flex items-center gap-0 sm:gap-1">
                             <button
                                 onClick={handleDocumentClick}
-                                className="text-slate-400 hover:text-cyan-400 transition-all p-2 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
+                                className="text-slate-400 hover:text-cyan-400 transition-all p-1.5 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Attach Document"
                             >
-                                <Plus className="w-7 h-7 sm:w-8 sm:h-8" />
+                                <Plus className="w-6 h-6 sm:w-8 sm:h-8" />
                             </button>
                             <button
                                 onClick={handleMediaClick}
-                                className="text-slate-400 hover:text-cyan-400 transition-all p-2 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
+                                className="text-slate-400 hover:text-cyan-400 transition-all p-1.5 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Send Image/Video/GIF"
                             >
-                                <ImageIcon className="w-7 h-7 sm:w-8 sm:h-8" />
+                                <ImageIcon className="w-6 h-6 sm:w-8 sm:h-8" />
                             </button>
                         </div>
 
-                        <form onSubmit={handleSend} className="flex-1 flex gap-2 sm:gap-4 items-center">
-                            <div className="flex-1 bg-slate-800/40 backdrop-blur-sm rounded-2xl flex items-center px-4 sm:px-6 py-3 sm:py-4 border border-white/10 focus-within:border-cyan-500/40 focus-within:ring-4 focus-within:ring-cyan-500/10 focus-within:bg-slate-800/60 transition-all duration-300 shadow-inner relative group">
+                        <form onSubmit={handleSend} className="flex-1 flex gap-1.5 sm:gap-4 items-center">
+                            <div className="flex-1 bg-slate-800/40 backdrop-blur-sm rounded-2xl flex items-center px-3 sm:px-6 py-2.5 sm:py-4 border border-white/10 focus-within:border-cyan-500/40 focus-within:ring-4 focus-within:ring-cyan-500/10 focus-within:bg-slate-800/60 transition-all duration-300 shadow-inner relative group">
                                 <input
                                     ref={inputRef}
                                     type="text"
@@ -1162,18 +1163,18 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                     <button
                                         type="button"
                                         onClick={shareLocation}
-                                        className="p-2 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
+                                        className="p-1.5 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Share Location"
                                     >
-                                        <MapPin className="w-7 h-7 sm:w-8 sm:h-8" />
+                                        <MapPin className="w-6 h-6 sm:w-8 sm:h-8" />
                                     </button>
                                     <button
                                         type="button"
                                         onClick={startRecording}
-                                        className="p-2 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
+                                        className="p-1.5 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Record Voice Message"
                                     >
-                                        <Mic className="w-7 h-7 sm:w-8 sm:h-8" />
+                                        <Mic className="w-6 h-6 sm:w-8 sm:h-8" />
                                     </button>
                                 </div>
                             )}
