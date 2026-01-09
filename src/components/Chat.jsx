@@ -950,7 +950,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
                             {showUnreadMarker && (
                                 <div className="flex justify-center py-4 relative z-10">
-                                    <div className="bg-cyan-500/10 text-cyan-400 text-[10px] px-6 py-1 rounded-full border border-cyan-500/30 font-bold tracking-widest uppercase animate-pulse">
+                                    <div className="bg-cyan-500/20 text-cyan-400 text-[10px] px-6 py-1 rounded-full border border-cyan-500/30 font-bold tracking-widest uppercase animate-pulse">
                                         New Messages Below
                                     </div>
                                 </div>
@@ -966,7 +966,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                         ${isOwn
                                         ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
                                         : isUnread
-                                            ? 'bg-cyan-500/10 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
+                                            ? 'bg-slate-900/95 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
                                             : 'bg-slate-900/80 border border-white/10 border-l-4 border-l-slate-500'}
                                         ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}
                                     `}>
@@ -1095,7 +1095,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             )}
 
             {/* Input Area */}
-            <div className="px-2 sm:px-6 py-1.5 sm:py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative flex items-center">
+            <div className="px-2 sm:px-6 py-1 sm:py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative flex items-center">
                 {/* Subtle top glow line */}
                 <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
 
@@ -1137,7 +1137,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                         </div>
 
                         <form onSubmit={handleSend} className="flex-1 flex gap-1.5 sm:gap-4 items-center">
-                            <div className="flex-1 bg-slate-800/40 backdrop-blur-sm rounded-2xl flex items-center px-3 sm:px-6 py-2.5 sm:py-4 border border-white/10 focus-within:border-cyan-500/40 focus-within:ring-4 focus-within:ring-cyan-500/10 focus-within:bg-slate-800/60 transition-all duration-300 shadow-inner relative group">
+                            <div className="flex-1 bg-slate-800/40 backdrop-blur-sm rounded-2xl flex items-center px-3 sm:px-6 py-1.5 sm:py-4 border border-white/10 focus-within:border-cyan-500/40 focus-within:ring-4 focus-within:ring-cyan-500/10 focus-within:bg-slate-800/60 transition-all duration-300 shadow-inner relative group">
                                 <input
                                     ref={inputRef}
                                     type="text"
