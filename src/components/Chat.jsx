@@ -852,10 +852,10 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
 
             {/* Header */}
-            <div className="wa-header shrink-0 z-20 bg-slate-900/90 backdrop-blur-md border-b border-white/5 gap-3 shadow-sm">
+            <div className="wa-header shrink-0 z-20 bg-[var(--wa-panel)] backdrop-blur-md border-b border-[var(--wa-border)] gap-3 shadow-sm">
                 <button
                     onClick={onBack}
-                    className="md:hidden p-2 -ml-2 text-slate-400 hover:bg-white/5 rounded-full"
+                    className="md:hidden p-2 -ml-2 text-[var(--wa-text-muted)] hover:bg-white/5 rounded-full"
                 >
                     <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
                 </button>
@@ -873,12 +873,12 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                     className="flex flex-col cursor-pointer flex-1"
                     onClick={() => setPreviewUser({ name: chatName, avatarUrl: chatAvatar })}
                 >
-                    <span className="text-white text-[16px] leading-tight font-medium tracking-wide">{chatName || 'Unknown'}</span>
-                    <span className={`text-[13px] leading-tight font-medium ${peerStatus.online ? 'text-green-400' : 'text-slate-400'}`}>
+                    <span className="text-[var(--wa-text)] text-[16px] leading-tight font-medium tracking-wide">{chatName || 'Unknown'}</span>
+                    <span className={`text-[13px] leading-tight font-medium ${peerStatus.online ? 'text-green-400' : 'text-[var(--wa-text-muted)]'}`}>
                         {peerStatus.online ? 'Online' : formatLastSeen(peerStatus.lastSeen)}
                     </span>
                 </div>
-                <div className="flex items-center gap-2 text-slate-400">
+                <div className="flex items-center gap-2 text-[var(--wa-text-muted)]">
                     {peerId && (
                         isContact ? (
                             <button
