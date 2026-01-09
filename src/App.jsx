@@ -8,9 +8,7 @@ import UserSearch from './components/UserSearch';
 import IncomingCall from './components/IncomingCall';
 import Settings from './components/Settings';
 import WeatherEffects from './components/WeatherEffects';
-import chatIcon from './assets/icons/chat_custom.png';
-import callIcon from './assets/icons/call_custom.png';
-import { Phone, PhoneOff, Lock, Check, X, Sun, Moon, Minimize2, Maximize2, Users, MessageCircle, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { Phone, PhoneOff, Lock, MessageCircle, Settings as SettingsIcon, LogOut, Check, X, Sun, Moon, Minimize2, Maximize2, Users } from 'lucide-react';
 
 // Ringback sound for caller
 const RINGBACK_URL = '/ringback.mp3';
@@ -34,6 +32,7 @@ function App() {
   const [searchViewMode, setSearchViewMode] = useState('history'); // 'history' or 'directory'
   const [previewUser, setPreviewUser] = useState(null);
   const [theme, setTheme] = useState('dark'); // 'dark' or 'light'
+  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
   const [chatBackground, setChatBackground] = useState(() => {
     const saved = localStorage.getItem('nexurao_chat_background');
     if (saved) {
@@ -59,7 +58,6 @@ function App() {
   const [notificationPopup, setNotificationPopup] = useState(null); // { title, body, id, user, roomId }
   const [activeCallType, setActiveCallType] = useState('outgoing'); // 'incoming' or 'outgoing'
   const [appLaunchTime] = useState(Date.now()); // Track launch time to avoid notifying old messages
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false); // Logout confirmation state
 
   const callTimeoutRef = useRef(null);
   const ringbackRef = useRef(null);
@@ -205,7 +203,7 @@ function App() {
     };
   }, [user]);
 
-  const performLogout = () => {
+  const handleLogout = () => {
     if (user) {
       const userPresenceRef = ref(db, `presence/global/${user.id}`);
       remove(userPresenceRef);
@@ -216,11 +214,7 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
-    setShowLogoutConfirm(true);
-  };
-
-  const startDirectChat = (otherUser, allowAutoCall = true, initialMessageId = null, searchMatchIds = [], searchTerm = '') => {
+  const startDirectChat = (otherUser, allowAutoCall = true, initialMessageId = null) => {
     const ids = [user.id, otherUser.id].sort();
     const dmRoomId = `dm_${ids[0]}_${ids[1]}`;
     const newChat = {
@@ -228,9 +222,7 @@ function App() {
       name: otherUser.displayName || otherUser.name,
       peerId: otherUser.id,
       avatarUrl: isValidAvatarUrl(otherUser.avatarUrl) ? otherUser.avatarUrl : null,
-      initialMessageId,
-      searchMatchIds, // Array of all matching message IDs
-      searchTerm      // The search term for highlighting
+      initialMessageId
     };
     setActiveChat(newChat);
     setShowSidebar(false);
@@ -607,7 +599,7 @@ function App() {
   }
 
   return (
-    <div className={`h-[100dvh] w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
+    <div className={`h-screen w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
       <WeatherEffects theme={theme} />
       <div className="absolute inset-0 top-0 h-32 bg-[#00a884] z-0 hidden md:block"></div>
 
@@ -683,11 +675,11 @@ function App() {
         </div>
       )}
 
-      <div className="flex-1 z-10 flex h-full min-h-0 justify-center md:py-5 md:px-5 lg:px-14">
+      <div className="flex-1 z-10 flex h-full justify-center md:py-5 md:px-5 lg:px-14">
         <div className="w-full h-full max-w-[1600px] bg-transparent flex flex-col md:flex-row shadow-2xl overflow-hidden rounded-none md:rounded-xl border-none md:border border-[#323b42]">
 
           {/* LEFT PANEL */}
-          <div className={`flex flex-col border-r border-[#323b42] h-full min-h-0 w-full md:w-[35%] lg:w-[30%] min-w-[300px] ${activeChat ? 'hidden md:flex' : 'flex'} ${theme === 'light' ? 'bg-white' : 'bg-[#111b21]'}`}>
+          <div className={`flex flex-col border-r border-[#323b42] h-full w-full md:w-[35%] lg:w-[30%] min-w-[300px] ${activeChat ? 'hidden md:flex' : 'flex'} ${theme === 'light' ? 'bg-white' : 'bg-[#111b21]'}`}>
             <div className="h-[60px] bg-[var(--wa-panel)] flex items-center justify-between px-4 border-b border-[var(--wa-border)] shrink-0">
               <div className="flex items-center gap-3">
                 <div
@@ -759,31 +751,31 @@ function App() {
             />
 
             {/* Theme Switcher */}
-            <div className="mt-auto border-t border-[var(--wa-border)] p-4 bg-[var(--wa-bg)] shrink-0 relative z-10">
-              <div className="grid grid-cols-[1fr_40px_1fr] gap-2 items-center bg-[var(--wa-panel)] rounded-full p-1 border border-[var(--wa-border)] group hover:border-[#00a884]/50 hover:shadow-lg hover:shadow-[#00a884]/10 transition-all duration-300 transform hover:scale-[1.02]">
+            <div className="mt-auto border-t border-[var(--wa-border)] p-2 bg-[var(--wa-bg)] shrink-0 relative z-10">
+              <div className="w-full grid grid-cols-[1fr_40px_1fr] gap-2 items-center bg-[var(--wa-panel)] rounded-full p-1 border border-[var(--wa-border)] group hover:border-[#00a884]/50 hover:shadow-lg hover:shadow-[#00a884]/10 transition-all duration-300 transform hover:scale-[1.02]">
                 <button
-                  onClick={() => setTheme('light')}
-                  className={`flex items-center justify-center gap-2 py-2 px-3 rounded-full text-[13px] font-bold transition-all duration-300 relative overflow-hidden ${theme === 'light' ? 'bg-[#00a884] text-white shadow-[0_0_15px_rgba(0,168,132,0.5)] scale-105' : 'text-[var(--wa-text-muted)] hover:text-[var(--wa-text)]'}`}
+                  onClick={toggleTheme}
+                  className={`flex items-center justify-center gap-2 py-3 sm:py-4 px-2 sm:px-4 rounded-full text-[12px] sm:text-[14px] font-bold transition-all duration-300 relative overflow-hidden ${theme === 'light' ? 'bg-[#00a884] text-white shadow-[0_0_15px_rgba(0,168,132,0.5)] scale-105' : 'text-[var(--wa-text-muted)] hover:text-[var(--wa-text)]'}`}
                 >
                   {theme === 'light' && <div className="animate-liquid"></div>}
-                  <Sun className={`w-4 h-4 transition-transform duration-500 relative z-10 ${theme === 'light' ? 'animate-sun' : 'group-hover:rotate-180 group-hover:text-amber-500'}`} />
+                  <Sun className={`w-5 sm:w-6 h-5 sm:h-6 transition-transform duration-500 relative z-10 ${theme === 'light' ? 'animate-sun' : 'group-hover:rotate-180 group-hover:text-amber-500'}`} />
                   <span className="relative z-10">Light</span>
                 </button>
-                <span className="px-1 text-[10px] uppercase tracking-widest text-[var(--wa-text-muted)] font-black pointer-events-none transition-all duration-300 group-hover:tracking-[0.3em] group-hover:text-[#00a884] whitespace-nowrap z-10 text-center block">Mode</span>
+                <span className="px-1 text-[10px] sm:text-[11px] uppercase tracking-widest text-[var(--wa-text-muted)] font-black pointer-events-none transition-all duration-300 group-hover:tracking-[0.3em] group-hover:text-[#00a884] whitespace-nowrap z-10 text-center block">Mode</span>
                 <button
-                  onClick={() => setTheme('dark')}
-                  className={`flex items-center justify-center gap-2 py-2 px-3 rounded-full text-[13px] font-bold transition-all duration-300 relative overflow-hidden ${theme === 'dark' ? 'bg-[#00a884] text-white shadow-[0_0_15px_rgba(0,168,132,0.5)] scale-105' : 'text-[var(--wa-text-muted)] hover:text-[var(--wa-text)]'}`}
+                  onClick={toggleTheme}
+                  className={`flex items-center justify-center gap-2 py-3 sm:py-4 px-2 sm:px-4 rounded-full text-[12px] sm:text-[14px] font-bold transition-all duration-300 relative overflow-hidden ${theme === 'dark' ? 'bg-[#00a884] text-white shadow-[0_0_15px_rgba(0,168,132,0.5)] scale-105' : 'text-[var(--wa-text-muted)] hover:text-[var(--wa-text)]'}`}
                 >
                   {theme === 'dark' && <div className="animate-liquid"></div>}
                   <span className="relative z-10">Dark</span>
-                  <Moon className={`w-4 h-4 transition-transform duration-500 relative z-10 ${theme === 'dark' ? 'animate-moon' : 'group-hover:-rotate-12 group-hover:text-blue-400'}`} />
+                  <Moon className={`w-5 sm:w-6 h-5 sm:h-6 transition-transform duration-500 relative z-10 ${theme === 'dark' ? 'animate-moon' : 'group-hover:-rotate-12 group-hover:text-blue-400'}`} />
                 </button>
               </div>
             </div>
           </div>
 
           {/* RIGHT PANEL */}
-          <div className={`flex-1 flex flex-col bg-[var(--wa-chat-bg)] h-full min-h-0 relative min-w-0 ${activeChat ? 'flex' : 'hidden md:flex'}`}>
+          <div className={`flex-1 flex flex-col bg-[var(--wa-chat-bg)] h-full relative min-w-0 ${activeChat ? 'flex' : 'hidden md:flex'}`}>
             {activeChat ? (
               <>
                 <Chat
@@ -797,12 +789,6 @@ function App() {
                   chatBackground={chatBackground}
                   unreadCount={currentChatUnreadCount}
                   initialMessageId={activeChat.initialMessageId}
-                  searchMatchIds={activeChat.searchMatchIds || []}
-                  searchTerm={activeChat.searchTerm || ''}
-                  onClearSearch={() => {
-                    setActiveChat(prev => ({ ...prev, searchMatchIds: [], searchTerm: '' }));
-                  }}
-                  theme={theme}
                 />
                 {isVoiceActive && (
                   <VoiceCall
@@ -854,29 +840,7 @@ function App() {
         </div>
       )
       }
-      {showLogoutConfirm && (
-        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setShowLogoutConfirm(false)}>
-          <div className="bg-[#2a3942] rounded-2xl shadow-2xl p-6 max-w-sm w-full animate-in zoom-in-95 border border-white/5" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-xl font-medium text-white mb-2">Log out?</h2>
-            <p className="text-slate-300 mb-6 text-sm leading-relaxed">Are you sure you want to log out of Nexurao? You will need to sign in again to access your messages.</p>
-            <div className="flex justify-end gap-3 font-medium">
-              <button
-                onClick={() => setShowLogoutConfirm(false)}
-                className="px-5 py-2.5 rounded-full text-[#00a884] hover:bg-[#00a884]/10 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={performLogout}
-                className="px-5 py-2.5 rounded-full bg-[#00a884] text-[#111b21] hover:bg-[#008f70] transition-colors shadow-lg shadow-[#00a884]/20"
-              >
-                Log out
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </div >
   );
 }
 

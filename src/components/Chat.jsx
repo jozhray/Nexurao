@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../lib/firebase';
-import { ref, push, onValue, serverTimestamp, query, limitToLast, set, get, remove, update } from 'firebase/database';
+import { ref, push, onValue, serverTimestamp, query, limitToLast, set, get, remove } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Send, Image as ImageIcon, Plus, Check, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash2, RotateCcw, CornerUpLeft, ChevronUp, ChevronDown, Search, Phone } from 'lucide-react';
+import { Send, Image as ImageIcon, Plus, Check, Phone, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash2, RotateCcw, CornerUpLeft } from 'lucide-react';
 
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
 const isValidAvatarUrl = (url) => {
@@ -11,36 +11,20 @@ const isValidAvatarUrl = (url) => {
     return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:');
 };
 
-export default function Chat({
-    user,
-    roomId,
-    onBack,
-    chatName,
-    chatAvatar,
-    peerId,
-    onStartCall,
-    chatBackground,
-    unreadCount = 0,
-    initialMessageId = null,
-    searchMatchIds = [],
-    searchTerm = '',
-    onClearSearch = () => { },
-    theme // Add theme prop
-}) {
+export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerId, onStartCall, chatBackground, unreadCount = 0, initialMessageId = null }) {
 
-    // Debug log to verify props are received
-    console.log('[Chat] searchMatchIds:', searchMatchIds, 'searchTerm:', searchTerm);
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [previewUser, setPreviewUser] = useState(null);
     const [confirmModal, setConfirmModal] = useState(null); // { type: 'delete'|'clear', target: id|null, title, message, action }
     const [replyTo, setReplyTo] = useState(null); // { id, text, userName }
     const [highlightedMessageId, setHighlightedMessageId] = useState(null);
-    const [currentMatchIndex, setCurrentMatchIndex] = useState(0); // For navigating between search matches
     const scrollRef = useRef(null);
     const inputRef = useRef(null);
 
-
+    // ... (refs and state unchanged) ...
+    // Note: I will only replace the top distinct part to add imports and prop.
+    // The handleSend logic is further down, I will use a separate replacement for that to be safe.
 
     // File input refs
     const docInputRef = useRef(null);
@@ -143,22 +127,6 @@ export default function Chat({
         remove(contactRef);
     };
 
-    const [clearedTimestamp, setClearedTimestamp] = useState(0);
-
-    // Listen for cleared timestamp
-    useEffect(() => {
-        if (!user.id || !peerId) return;
-        const configRef = ref(db, `user_chats/${user.id}/${peerId}`);
-        const unsubscribe = onValue(configRef, (snapshot) => {
-            if (snapshot.exists()) {
-                const data = snapshot.val();
-                setClearedTimestamp(data.clearedTimestamp || 0);
-            }
-        });
-        return () => unsubscribe();
-    }, [user.id, peerId]);
-
-
     useEffect(() => {
         if (!roomId) return;
 
@@ -227,15 +195,11 @@ export default function Chat({
     }, [replyTo]);
 
     const jumpToMessage = (msgId) => {
-        console.log('[Chat] Attempting to jump to message:', msgId);
         const el = document.getElementById(`msg-${msgId}`);
         if (el) {
-            console.log('[Chat] Found message element, scrolling...');
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             setHighlightedMessageId(msgId);
             setTimeout(() => setHighlightedMessageId(null), 2500);
-        } else {
-            console.warn('[Chat] Message element not found:', msgId);
         }
     };
 
@@ -245,48 +209,18 @@ export default function Chat({
         }
     }, [messages, initialMessageId]);
 
-    // Jump to initial message if provided - with retry logic
+    // Jump to initial message if provided
     useEffect(() => {
         if (initialMessageId && messages.length > 0) {
-            console.log('[Chat] initialMessageId received:', initialMessageId);
             const hasMessage = messages.some(m => m.id === initialMessageId);
-            console.log('[Chat] Message found in list:', hasMessage);
             if (hasMessage) {
-                // Retry multiple times to ensure DOM is ready
-                const attemptJump = (attempt = 0) => {
-                    const el = document.getElementById(`msg-${initialMessageId}`);
-                    if (el) {
-                        jumpToMessage(initialMessageId);
-                    } else if (attempt < 5) {
-                        console.log('[Chat] Retrying jump, attempt:', attempt + 1);
-                        setTimeout(() => attemptJump(attempt + 1), 300);
-                    }
-                };
-                const timer = setTimeout(() => attemptJump(), 400);
+                const timer = setTimeout(() => {
+                    jumpToMessage(initialMessageId);
+                }, 600);
                 return () => clearTimeout(timer);
             }
         }
     }, [initialMessageId, messages]);
-
-    // Navigation functions for search matches
-    const goToNextMatch = () => {
-        if (searchMatchIds.length === 0) return;
-        const nextIndex = (currentMatchIndex + 1) % searchMatchIds.length;
-        setCurrentMatchIndex(nextIndex);
-        jumpToMessage(searchMatchIds[nextIndex]);
-    };
-
-    const goToPrevMatch = () => {
-        if (searchMatchIds.length === 0) return;
-        const prevIndex = currentMatchIndex === 0 ? searchMatchIds.length - 1 : currentMatchIndex - 1;
-        setCurrentMatchIndex(prevIndex);
-        jumpToMessage(searchMatchIds[prevIndex]);
-    };
-
-    const clearSearchNavigation = () => {
-        setCurrentMatchIndex(0);
-        onClearSearch();
-    };
 
     const handleDeleteMessage = (msgId) => {
         setConfirmModal({
@@ -306,13 +240,9 @@ export default function Chat({
             type: 'clear',
             target: null,
             title: 'Clear Chat History',
-            message: 'This will clear the chat history for you. The other person will still see the messages. Are you sure?',
+            message: 'This will permanently delete all messages in this conversation. Are you sure?',
             action: () => {
-                // Soft delete: Update clearedTimestamp for the current user
-                if (user.id && peerId) {
-                    const userChatRef = ref(db, `user_chats/${user.id}/${peerId}`);
-                    update(userChatRef, { clearedTimestamp: serverTimestamp() });
-                }
+                remove(ref(db, `messages/${roomId}`));
                 setConfirmModal(null);
             }
         });
@@ -508,25 +438,17 @@ export default function Chat({
             mediaRecorderRef.current.onstop = () => {
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
 
-                // Calculate duration from blob
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const fileReader = new FileReader();
-
-                fileReader.onload = (e) => {
-                    const arrayBuffer = e.target.result;
-                    audioContext.decodeAudioData(arrayBuffer, (buffer) => {
-                        const duration = Math.round(buffer.duration);
-
-                        // Convert blob to Base64 data URL
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                            const dataUrl = reader.result;
-                            sendVoiceMessage(dataUrl, duration, audioBlob.size);
-                        };
-                        reader.readAsDataURL(audioBlob);
-                    });
+                // Convert blob to Base64 data URL for cross-browser sharing
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const dataUrl = reader.result;
+                    sendVoiceMessage(dataUrl);
                 };
-                fileReader.readAsArrayBuffer(audioBlob);
+                reader.onerror = () => {
+                    console.error('[Chat] Failed to convert audio to Base64');
+                    alert('Failed to process voice message. Please try again.');
+                };
+                reader.readAsDataURL(audioBlob);
 
                 stream.getTracks().forEach(track => track.stop());
             };
@@ -553,14 +475,13 @@ export default function Chat({
         }
     };
 
-    const sendVoiceMessage = (audioDataUrl, duration, fileSize) => {
+    const sendVoiceMessage = (audioDataUrl) => {
         if (!roomId) return;
         // Stage voice message for confirmation
         setPendingAttachment({
             type: 'voice',
             audioUrl: audioDataUrl,
-            duration: duration || recordingTime, // Fallback to timer if calculation fails
-            fileSize: fileSize || 0
+            duration: recordingTime
         });
         setRecordingTime(0);
     };
@@ -618,39 +539,20 @@ export default function Chat({
     };
 
     const [playingVoice, setPlayingVoice] = useState(null); // URL of the currently playing voice message
-    const [playingProgress, setPlayingProgress] = useState(0); // 0 to 100
-    const [playingTime, setPlayingTime] = useState(0); // Current playback time in seconds
     const audioRef = useRef(null);
 
     const toggleVoicePlayback = (url) => {
         if (playingVoice === url) {
             audioRef.current?.pause();
             setPlayingVoice(null);
-            setPlayingProgress(0);
-            setPlayingTime(0);
         } else {
             if (audioRef.current) {
                 audioRef.current.pause();
             }
             audioRef.current = new Audio(url);
-
-            // Add event listeners for progress tracking
-            audioRef.current.ontimeupdate = () => {
-                if (audioRef.current) {
-                    const progress = (audioRef.current.currentTime / audioRef.current.duration) * 100;
-                    setPlayingProgress(progress || 0); // Handle Infinity/NaN
-                    setPlayingTime(audioRef.current.currentTime);
-                }
-            };
-
-            audioRef.current.onended = () => {
-                setPlayingVoice(null);
-                setPlayingProgress(0);
-                setPlayingTime(0);
-            };
-
             audioRef.current.play();
             setPlayingVoice(url);
+            audioRef.current.onended = () => setPlayingVoice(null);
         }
     };
 
@@ -753,19 +655,9 @@ export default function Chat({
                             </button>
                             <div className="flex-1 space-y-1">
                                 <div className={`h-1 rounded-full overflow-hidden ${isMsgOwn ? 'bg-black/20' : 'bg-white/10'}`}>
-                                    <div
-                                        className={`h-full rounded-full transition-all duration-100 ${isMsgOwn ? 'bg-white' : 'bg-cyan-500'}`}
-                                        style={{ width: `${playingVoice === msg.audioUrl ? playingProgress : 0}%` }}
-                                    />
+                                    <div className={`h-full w-1/3 rounded-full ${isMsgOwn ? 'bg-white' : 'bg-cyan-500'}`} />
                                 </div>
-                                <div className="flex items-center justify-between">
-                                    <p className={`text-xs font-mono ${attachmentSubText}`}>
-                                        {playingVoice === msg.audioUrl ? formatTime(playingTime) : formatTime(msg.duration || 0)}
-                                    </p>
-                                    <p className={`text-[10px] opacity-70 ${attachmentSubText}`}>
-                                        {msg.fileSize ? (msg.fileSize / 1024).toFixed(1) + ' KB' : ''}
-                                    </p>
-                                </div>
+                                <p className={`text-xs font-mono ${attachmentSubText}`}>{formatTime(msg.duration || 0)}</p>
                             </div>
                         </div>
                         {renderCaption()}
@@ -810,7 +702,7 @@ export default function Chat({
 
 
     return (
-        <div className="flex-1 flex flex-col h-full min-h-0 relative bg-[#0b141a]">
+        <div className="flex-1 flex flex-col h-full relative bg-[#0b141a]">
             {/* Background Pattern */}
             {chatBackground?.url ? (
                 <div
@@ -960,16 +852,10 @@ export default function Chat({
 
 
             {/* Header */}
-            <div className={`wa-header shrink-0 z-20 backdrop-blur-md border-b gap-3 shadow-sm transition-colors duration-300 ${theme === 'light' && (chatBackground?.id === 'light-chat' || chatBackground?.url?.includes('efeae2'))
-                ? 'bg-white/95 border-slate-200 text-slate-900'
-                : 'bg-slate-900/90 border-white/5 text-white'
-                }`}>
+            <div className="wa-header shrink-0 z-20 bg-slate-900/90 backdrop-blur-md border-b border-white/5 gap-3 shadow-sm">
                 <button
                     onClick={onBack}
-                    className={`md:hidden p-2 -ml-2 rounded-full ${theme === 'light' && (chatBackground?.id === 'light-chat' || chatBackground?.url?.includes('efeae2'))
-                        ? 'text-slate-600 hover:bg-slate-100'
-                        : 'text-slate-400 hover:bg-white/5'
-                        }`}
+                    className="md:hidden p-2 -ml-2 text-slate-400 hover:bg-white/5 rounded-full"
                 >
                     <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
                 </button>
@@ -987,33 +873,17 @@ export default function Chat({
                     className="flex flex-col cursor-pointer flex-1"
                     onClick={() => setPreviewUser({ name: chatName, avatarUrl: chatAvatar })}
                 >
-                    <span className={`text-[16px] leading-tight font-medium tracking-wide ${theme === 'light' && (chatBackground?.id === 'light-chat' || chatBackground?.url?.includes('efeae2'))
-                        ? 'text-slate-900'
-                        : 'text-white'
-                        }`}>{chatName || 'Unknown'}</span>
-                    <span className={`text-[13px] leading-tight font-medium ${peerStatus.online
-                        ? 'text-green-500'
-                        : (theme === 'light' && (chatBackground?.id === 'light-chat' || chatBackground?.url?.includes('efeae2')) ? 'text-slate-500' : 'text-slate-300')
-                        }`}>
+                    <span className="text-white text-[16px] leading-tight font-medium tracking-wide">{chatName || 'Unknown'}</span>
+                    <span className={`text-[13px] leading-tight font-medium ${peerStatus.online ? 'text-green-400' : 'text-slate-400'}`}>
                         {peerStatus.online ? 'Online' : formatLastSeen(peerStatus.lastSeen)}
                     </span>
                 </div>
-                <div className={`flex items-center gap-1 ${theme === 'light' && (chatBackground?.id === 'light-chat' || chatBackground?.url?.includes('efeae2'))
-                    ? 'text-slate-600'
-                    : 'text-slate-400'
-                    }`}>
-                    <button
-                        onClick={onStartCall}
-                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                        title="Start Voice Call"
-                    >
-                        <Phone className="w-5 h-5" />
-                    </button>
+                <div className="flex items-center gap-2 text-slate-400">
                     {peerId && (
                         isContact ? (
                             <button
                                 onClick={handleRemoveFromContacts}
-                                className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                className="p-2 hover:bg-white/10 rounded-full text-cyan-400 hover:text-rose-400 transition-colors"
                                 title="Remove from Contacts"
                             >
                                 <UserMinus className="w-5 h-5" />
@@ -1021,7 +891,7 @@ export default function Chat({
                         ) : (
                             <button
                                 onClick={handleAddToContacts}
-                                className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                className="p-2 hover:bg-white/10 rounded-full hover:text-cyan-400 transition-colors"
                                 title="Add to Contacts"
                             >
                                 <UserPlus className="w-5 h-5" />
@@ -1029,8 +899,15 @@ export default function Chat({
                         )
                     )}
                     <button
+                        onClick={onStartCall}
+                        className="p-2 hover:bg-white/10 rounded-full hover:text-cyan-400 transition-colors"
+                        title="Start Voice Call"
+                    >
+                        <Phone className="w-5 h-5" />
+                    </button>
+                    <button
                         onClick={handleClearChat}
-                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                        className="p-2 hover:bg-white/10 rounded-full hover:text-rose-400 transition-colors"
                         title="Clear Chat"
                     >
                         <Trash2 className="w-5 h-5" />
@@ -1038,148 +915,106 @@ export default function Chat({
                 </div>
             </div>
 
-            {/* Search Navigation Bar - Shows when there are search matches */}
-            {Array.isArray(searchMatchIds) && searchMatchIds.length > 0 && searchTerm && (
-                <div className="flex items-center justify-between px-4 py-2 bg-cyan-900/80 border-b border-cyan-500/50 text-white z-10">
-                    <div className="flex items-center gap-2">
-                        <Search className="w-4 h-4 text-cyan-400" />
-                        <span className="text-sm text-slate-300">
-                            Searching for "<span className="text-cyan-400 font-medium">{searchTerm}</span>"
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <span className="text-sm text-slate-400">
-                            {currentMatchIndex + 1} of {searchMatchIds.length} matches
-                        </span>
-                        <div className="flex items-center gap-1">
-                            <button
-                                onClick={goToPrevMatch}
-                                className="p-1.5 hover:bg-white/10 rounded-full transition-colors"
-                                title="Previous Match"
-                            >
-                                <ChevronUp className="w-5 h-5 text-cyan-400" />
-                            </button>
-                            <button
-                                onClick={goToNextMatch}
-                                className="p-1.5 hover:bg-white/10 rounded-full transition-colors"
-                                title="Next Match"
-                            >
-                                <ChevronDown className="w-5 h-5 text-cyan-400" />
-                            </button>
-                        </div>
-                        <button
-                            onClick={clearSearchNavigation}
-                            className="p-1.5 hover:bg-white/10 rounded-full transition-colors"
-                            title="Close Search"
-                        >
-                            <X className="w-4 h-4 text-slate-400 hover:text-white" />
-                        </button>
-                    </div>
-                </div>
-            )}
-
             {/* Messages */}
             <div
                 ref={scrollRef}
                 className="flex-1 overflow-y-auto overflow-x-hidden px-[10px] pt-[10px] pb-4 flex flex-col gap-3 custom-scrollbar"
             >
-                {messages
-                    .filter(msg => !clearedTimestamp || msg.timestamp > clearedTimestamp)
-                    .map((msg, index, filteredArr) => {
-                        const isOwn = msg.userId === user.id;
-                        const prevMsg = filteredArr[index - 1];
-                        const nextMsg = filteredArr[index + 1];
-                        const isLastInGroup = !nextMsg || nextMsg.userId !== msg.userId;
+                {messages.map((msg, index) => {
+                    const isOwn = msg.userId === user.id;
+                    const prevMsg = messages[index - 1];
+                    const nextMsg = messages[index + 1];
+                    const isLastInGroup = !nextMsg || nextMsg.userId !== msg.userId;
 
-                        // Date divider logic
-                        const msgDate = new Date(msg.timestamp).toDateString();
-                        const prevMsgDate = prevMsg ? new Date(prevMsg.timestamp).toDateString() : null;
-                        const showDateDivider = msgDate !== prevMsgDate;
+                    // Date divider logic
+                    const msgDate = new Date(msg.timestamp).toDateString();
+                    const prevMsgDate = prevMsg ? new Date(prevMsg.timestamp).toDateString() : null;
+                    const showDateDivider = msgDate !== prevMsgDate;
 
-                        // Unread Highlighting Logic
-                        // If unreadCount is 3, the last 3 messages should be checked.
-                        // However, messages are fetched in order. So index >= messages.length - unreadCount
-                        const isUnread = unreadCount > 0 && (index >= messages.length - unreadCount) && !isOwn;
-                        const showUnreadMarker = unreadCount > 0 && (index === messages.length - unreadCount);
+                    // Unread Highlighting Logic
+                    // If unreadCount is 3, the last 3 messages should be checked.
+                    // However, messages are fetched in order. So index >= messages.length - unreadCount
+                    const isUnread = unreadCount > 0 && (index >= messages.length - unreadCount) && !isOwn;
+                    const showUnreadMarker = unreadCount > 0 && (index === messages.length - unreadCount);
 
-                        return (
-                            <React.Fragment key={msg.id}>
-                                {showDateDivider && (
-                                    <div className="flex justify-center py-4 first:pt-2 relative z-10">
-                                        <div className="bg-slate-900/60 text-cyan-200/70 text-[11px] px-4 py-1.5 rounded-full shadow-sm uppercase font-bold tracking-widest border border-cyan-500/10 backdrop-blur-md">
-                                            {formatDateDivider(msg.timestamp)}
-                                        </div>
+                    return (
+                        <React.Fragment key={msg.id}>
+                            {showDateDivider && (
+                                <div className="flex justify-center py-4 first:pt-2 relative z-10">
+                                    <div className="bg-slate-900/60 text-cyan-200/70 text-[11px] px-4 py-1.5 rounded-full shadow-sm uppercase font-bold tracking-widest border border-cyan-500/10 backdrop-blur-md">
+                                        {formatDateDivider(msg.timestamp)}
                                     </div>
-                                )}
+                                </div>
+                            )}
 
-                                {showUnreadMarker && (
-                                    <div className="flex justify-center py-4 relative z-10">
-                                        <div className="bg-cyan-500/10 text-cyan-400 text-[10px] px-6 py-1 rounded-full border border-cyan-500/30 font-bold tracking-widest uppercase animate-pulse">
-                                            New Messages Below
-                                        </div>
+                            {showUnreadMarker && (
+                                <div className="flex justify-center py-4 relative z-10">
+                                    <div className="bg-cyan-500/10 text-cyan-400 text-[10px] px-6 py-1 rounded-full border border-cyan-500/30 font-bold tracking-widest uppercase animate-pulse">
+                                        New Messages Below
                                     </div>
-                                )}
+                                </div>
+                            )}
 
-                                <div id={`msg-${msg.id}`} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} w-full mb-1 ${isUnread ? 'animate-unread-pulse' : ''}`}>
-                                    {/* Sender name for incoming messages */}
-                                    {!isOwn && isLastInGroup && (
-                                        <span className="text-[11px] text-cyan-400 font-bold mb-1 ml-3 tracking-wide">{msg.userName || 'Unknown'}</span>
-                                    )}
-                                    <div className={`
+                            <div id={`msg-${msg.id}`} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} w-full mb-1 ${isUnread ? 'animate-unread-pulse' : ''}`}>
+                                {/* Sender name for incoming messages */}
+                                {!isOwn && isLastInGroup && (
+                                    <span className="text-[11px] text-cyan-400 font-bold mb-1 ml-3 tracking-wide">{msg.userName || 'Unknown'}</span>
+                                )}
+                                <div className={`
                                         flex flex-col rounded-lg shadow-sm max-w-[85%] md:max-w-[65%] group backdrop-blur-sm transition-all overflow-hidden
                                         ${isOwn
-                                            ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
-                                            : isUnread
-                                                ? 'bg-cyan-500/10 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
-                                                : 'bg-slate-900/80 border border-white/10 border-l-4 border-l-slate-500'}
+                                        ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
+                                        : isUnread
+                                            ? 'bg-cyan-500/10 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
+                                            : 'bg-slate-900/80 border border-white/10 border-l-4 border-l-slate-500'}
                                         ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}
                                     `}>
 
-                                        {/* Quote Block (Reply) */}
-                                        {msg.replyTo && (
-                                            <div
-                                                className="mx-2 mt-2 p-2 px-3 bg-black/20 rounded-lg border-l-4 border-l-cyan-500 cursor-pointer hover:bg-black/30 transition-colors"
-                                                onClick={() => jumpToMessage(msg.replyTo.id)}
-                                            >
-                                                <p className="text-cyan-400 text-[10px] font-bold uppercase tracking-wider mb-0.5">{msg.replyTo.userName}</p>
-                                                <p className="text-slate-300 text-xs truncate opacity-70 italic">"{msg.replyTo.text}"</p>
-                                            </div>
-                                        )}
-
-                                        {/* Message Content */}
-                                        <div className={`p-4 pt-3 pb-2 text-[15px] leading-relaxed text-white font-light tracking-wide break-words transition-all duration-500 ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}`}>
-                                            {renderMessage(msg)}
+                                    {/* Quote Block (Reply) */}
+                                    {msg.replyTo && (
+                                        <div
+                                            className="mx-2 mt-2 p-2 px-3 bg-black/20 rounded-lg border-l-4 border-l-cyan-500 cursor-pointer hover:bg-black/30 transition-colors"
+                                            onClick={() => jumpToMessage(msg.replyTo.id)}
+                                        >
+                                            <p className="text-cyan-400 text-[10px] font-bold uppercase tracking-wider mb-0.5">{msg.replyTo.userName}</p>
+                                            <p className="text-slate-300 text-xs truncate opacity-70 italic">"{msg.replyTo.text}"</p>
                                         </div>
+                                    )}
 
-                                        {/* Footer: Time & Status */}
-                                        <div className={`px-4 py-1.5 flex justify-end items-center gap-1.5 bg-black/20 ${isOwn ? 'text-cyan-400' : isUnread ? 'text-cyan-300' : 'text-slate-500'}`}>
-                                            <button
-                                                onClick={() => {
-                                                    const replyText = msg.text || (msg.type === 'voice' ? 'Voice Message' : msg.type === 'image' ? 'Image' : msg.type === 'video' ? 'Video' : msg.type === 'document' ? msg.fileName : 'Attachment');
-                                                    setReplyTo({ id: msg.id, text: replyText, userName: msg.userName });
-                                                }}
-                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-cyan-400 transition-all mr-1"
-                                                title="Reply"
-                                            >
-                                                <CornerUpLeft className="w-3 h-3" />
-                                            </button>
-                                            <button
-                                                onClick={() => handleDeleteMessage(msg.id)}
-                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 transition-all mr-auto"
-                                                title="Delete Message"
-                                            >
-                                                <Trash2 className="w-3 h-3" />
-                                            </button>
-                                            <span className="text-[10px] font-mono uppercase tracking-wider opacity-80">
-                                                {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                                            </span>
-                                            {isOwn && <Check className="w-3 h-3 opacity-100" />}
-                                        </div>
+                                    {/* Message Content */}
+                                    <div className={`p-4 pt-3 pb-2 text-[15px] leading-relaxed text-white font-light tracking-wide break-words transition-all duration-500 ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}`}>
+                                        {renderMessage(msg)}
+                                    </div>
+
+                                    {/* Footer: Time & Status */}
+                                    <div className={`px-4 py-1.5 flex justify-end items-center gap-1.5 bg-black/20 ${isOwn ? 'text-cyan-400' : isUnread ? 'text-cyan-300' : 'text-slate-500'}`}>
+                                        <button
+                                            onClick={() => {
+                                                const replyText = msg.text || (msg.type === 'voice' ? 'Voice Message' : msg.type === 'image' ? 'Image' : msg.type === 'video' ? 'Video' : msg.type === 'document' ? msg.fileName : 'Attachment');
+                                                setReplyTo({ id: msg.id, text: replyText, userName: msg.userName });
+                                            }}
+                                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-cyan-400 transition-all mr-1"
+                                            title="Reply"
+                                        >
+                                            <CornerUpLeft className="w-3 h-3" />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteMessage(msg.id)}
+                                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 transition-all mr-auto"
+                                            title="Delete Message"
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                        </button>
+                                        <span className="text-[10px] font-mono uppercase tracking-wider opacity-80">
+                                            {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                        </span>
+                                        {isOwn && <Check className="w-3 h-3 opacity-100" />}
                                     </div>
                                 </div>
-                            </React.Fragment>
-                        );
-                    })}
+                            </div>
+                        </React.Fragment>
+                    );
+                })}
             </div>
 
             {/* Inline Attachment Preview */}
@@ -1259,87 +1094,86 @@ export default function Chat({
             )}
 
             {/* Input Area */}
-            <div className="px-4 py-3 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative">
+            <div className="px-6 py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative">
                 {/* Subtle top glow line */}
-                <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
+                <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
 
                 {isRecording ? (
                     /* Recording UI */
-                    <div className="flex-1 flex items-center gap-4 bg-slate-800/80 backdrop-blur-md rounded-2xl px-5 py-3 border border-white/10 shadow-inner">
-                        <div className="w-3 h-3 rounded-full bg-rose-500 animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.6)]" />
-                        <span className="text-white text-sm font-mono tracking-widest">{formatTime(recordingTime)}</span>
-                        <div className="flex-1 flex items-center gap-1.5 px-2">
-                            {[...Array(24)].map((_, i) => (
-                                <div key={i} className="w-1 bg-cyan-500 rounded-full opacity-60 animate-bounce" style={{ height: Math.random() * 24 + 4, animationDelay: `${i * 40}ms`, animationDuration: '0.8s' }} />
+                    <div className="flex-1 flex items-center gap-3 sm:gap-6 bg-slate-800/80 backdrop-blur-md rounded-2xl px-4 sm:px-6 py-3 sm:py-4 border border-white/10 shadow-inner">
+                        <div className="w-3 h-3 sm:w-4 sm:h-4 rounded-full bg-rose-500 animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.6)]" />
+                        <span className="text-base sm:text-lg font-mono tracking-widest">{formatTime(recordingTime)}</span>
+                        <div className="flex-1 flex items-center gap-1 sm:gap-2 px-1 sm:px-2">
+                            {[...Array(window.innerWidth < 640 ? 12 : 24)].map((_, i) => (
+                                <div key={i} className="w-1 sm:w-1.5 bg-cyan-500 rounded-full opacity-60 animate-bounce" style={{ height: Math.random() * (window.innerWidth < 640 ? 20 : 30) + 6, animationDelay: `${i * 40}ms`, animationDuration: '0.8s' }} />
                             ))}
                         </div>
                         <button
                             onClick={stopRecording}
-                            className="w-11 h-11 rounded-full bg-rose-500 flex items-center justify-center text-white hover:bg-rose-600 transition-all shadow-xl hover:scale-110 active:scale-95 group"
+                            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-rose-500 flex items-center justify-center text-white hover:bg-rose-600 transition-all shadow-xl hover:scale-110 active:scale-95 group"
                         >
-                            <Square className="w-4 h-4 text-white fill-current group-hover:scale-90 transition-transform" />
+                            <Square className="w-5 h-5 sm:w-6 sm:h-6 text-white fill-current group-hover:scale-90 transition-transform" />
                         </button>
                     </div>
                 ) : (
                     /* Normal Input UI */
-                    /* Normal Input UI */
                     <div className="flex items-center gap-1 sm:gap-2 max-w-[1400px] mx-auto w-full">
-                        <div className="flex items-center shrink-0 -ml-1 sm:ml-0"> {/* Negative margin to save left space */}
+                        <div className="flex items-center gap-0.5 sm:gap-1">
                             <button
                                 onClick={handleDocumentClick}
-                                className="text-slate-400 hover:text-cyan-400 transition-all p-2 hover:bg-white/5 rounded-full active:scale-90"
+                                className="text-slate-400 hover:text-cyan-400 transition-all p-2 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Attach Document"
                             >
-                                <Plus className="w-5 h-5 sm:w-6 sm:h-6" />
+                                <Plus className="w-7 h-7 sm:w-8 sm:h-8" />
                             </button>
                             <button
                                 onClick={handleMediaClick}
-                                className="text-slate-400 hover:text-cyan-400 transition-all p-2 hover:bg-white/5 rounded-full active:scale-90"
+                                className="text-slate-400 hover:text-cyan-400 transition-all p-2 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Send Image/Video/GIF"
                             >
-                                <ImageIcon className="w-5 h-5 sm:w-6 sm:h-6" />
+                                <ImageIcon className="w-7 h-7 sm:w-8 sm:h-8" />
                             </button>
                         </div>
 
-                        <form onSubmit={handleSend} className="flex-1 flex gap-1.5 sm:gap-3 items-center min-w-0">
-                            <div className="flex-1 bg-slate-800/40 backdrop-blur-sm rounded-2xl flex items-center px-3 sm:px-5 py-2 sm:py-3 border border-white/10 focus-within:border-cyan-500/40 focus-within:ring-4 focus-within:ring-cyan-500/10 focus-within:bg-slate-800/60 transition-all duration-300 shadow-inner relative group min-w-0">
+                        <form onSubmit={handleSend} className="flex-1 flex gap-2 sm:gap-4 items-center">
+                            <div className="flex-1 bg-slate-800/40 backdrop-blur-sm rounded-2xl flex items-center px-4 sm:px-6 py-3 sm:py-4 border border-white/10 focus-within:border-cyan-500/40 focus-within:ring-4 focus-within:ring-cyan-500/10 focus-within:bg-slate-800/60 transition-all duration-300 shadow-inner relative group">
                                 <input
                                     ref={inputRef}
                                     type="text"
                                     value={input}
                                     onChange={(e) => setInput(e.target.value)}
-                                    placeholder={pendingAttachment ? "Add caption..." : "Type..."}
-                                    className="flex-1 bg-transparent border-none outline-none text-white placeholder-slate-500 text-[14px] sm:text-[15px] font-light tracking-wide min-w-0"
+                                    placeholder={pendingAttachment ? "Add a caption..." : "Type a message..."}
+                                    className="flex-1 bg-transparent border-none outline-none text-white placeholder-slate-500 text-[16px] sm:text-[17px] font-light tracking-wide"
                                 />
                                 {/* Bottom hover highlight */}
-                                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-[1px] bg-cyan-500/50 group-focus-within:w-full transition-all duration-500" />
+                                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-[2px] bg-cyan-500/50 group-focus-within:w-full transition-all duration-500" />
                             </div>
 
                             {(input.trim() || pendingAttachment) ? (
                                 <button
                                     type="submit"
                                     onClick={handleSend}
-                                    className="w-10 h-10 sm:w-12 sm:h-12 shrink-0 rounded-full flex items-center justify-center bg-gradient-to-tr from-cyan-600 to-cyan-400 text-white shadow-[0_4px_15px_rgba(6,182,212,0.3)] hover:shadow-[0_6px_20px_rgba(6,182,212,0.4)] active:scale-95 transition-all duration-300 transform"
+                                    className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded-full flex items-center justify-center bg-gradient-to-tr from-cyan-600 to-cyan-400 text-white shadow-[0_4px_15px_rgba(6,182,212,0.3)] hover:shadow-[0_6px_20px_rgba(6,182,212,0.4)] hover:scale-110 active:scale-95 transition-all duration-300 transform"
                                 >
-                                    <Send className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />
+                                    <Send className="w-5 h-5 sm:w-6 sm:h-6 sm:ml-1" />
                                 </button>
                             ) : (
-                                <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 -mr-1 sm:mr-0"> {/* Negative margin to save right space */}
+                                <div className="flex items-center gap-1 sm:gap-2">
                                     <button
                                         type="button"
                                         onClick={shareLocation}
-                                        className="p-2 sm:p-2.5 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all active:scale-90"
+                                        className="p-2 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Share Location"
                                     >
-                                        <MapPin className="w-5 h-5 sm:w-6 sm:h-6" />
+                                        <MapPin className="w-7 h-7 sm:w-8 sm:h-8" />
                                     </button>
                                     <button
                                         type="button"
                                         onClick={startRecording}
-                                        className="p-2 sm:p-2.5 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all active:scale-90"
+                                        className="p-2 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Record Voice Message"
                                     >
-                                        <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
+                                        <Mic className="w-7 h-7 sm:w-8 sm:h-8" />
                                     </button>
                                 </div>
                             )}

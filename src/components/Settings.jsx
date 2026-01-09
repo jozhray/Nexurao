@@ -86,7 +86,7 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
 
         setSaving(true);
         try {
-            const userRef = ref(db, `users / ${user.id} `);
+            const userRef = ref(db, `users/${user.id}`);
             await update(userRef, {
                 displayName: displayName.trim(),
                 about: about.trim() || 'Hey there! I am using Nexurao.',
@@ -125,8 +125,8 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
     };
 
     return (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
-            <div className="bg-[#111b21] rounded-2xl w-[400px] shadow-2xl border border-[#323b42] overflow-hidden">
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in p-4">
+            <div className="bg-[#111b21] rounded-2xl w-full max-w-[400px] shadow-2xl border border-[#323b42] overflow-hidden max-h-[90vh] flex flex-col">
                 {/* Header */}
                 <div className="bg-[#202c33] px-5 py-4 flex items-center justify-between">
                     <h2 className="text-lg font-medium text-[#e9edef]">Settings</h2>
@@ -142,28 +142,28 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                 <div className="flex border-b border-[#323b42]">
                     <button
                         onClick={() => setActiveTab('profile')}
-                        className={`flex - 1 py - 3 px - 4 flex items - center justify - center gap - 2 text - sm font - medium transition - colors ${activeTab === 'profile'
-                                ? 'text-[#00a884] border-b-2 border-[#00a884] bg-white/5'
-                                : 'text-[#8696a0] hover:bg-white/5'
-                            } `}
+                        className={`flex-1 py-3 px-4 flex items-center justify-center gap-2 text-sm font-medium transition-colors ${activeTab === 'profile'
+                            ? 'text-[#00a884] border-b-2 border-[#00a884] bg-white/5'
+                            : 'text-[#8696a0] hover:bg-white/5'
+                            }`}
                     >
-                        <img src={editIcon} alt="Edit" className="w-5 h-5 object-contain opacity-90" />
+                        <Pencil className="w-4 h-4 opacity-90" />
                         Edit Profile
                     </button>
                     <button
                         onClick={() => setActiveTab('background')}
-                        className={`flex - 1 py - 3 px - 4 flex items - center justify - center gap - 2 text - sm font - medium transition - colors ${activeTab === 'background'
-                                ? 'text-[#00a884] border-b-2 border-[#00a884] bg-white/5'
-                                : 'text-[#8696a0] hover:bg-white/5'
-                            } `}
+                        className={`flex-1 py-3 px-4 flex items-center justify-center gap-2 text-sm font-medium transition-colors ${activeTab === 'background'
+                            ? 'text-[#00a884] border-b-2 border-[#00a884] bg-white/5'
+                            : 'text-[#8696a0] hover:bg-white/5'
+                            }`}
                     >
-                        <img src={backgroundIcon} alt="Background" className="w-5 h-5 object-contain opacity-90" />
+                        <Image className="w-4 h-4 opacity-90" />
                         Chat Background
                     </button>
                 </div>
 
                 {/* Content */}
-                <div className="p-6">
+                <div className="p-6 overflow-y-auto flex-1 custom-scrollbar">
                     {activeTab === 'profile' ? (
                         /* Edit Profile Tab */
                         <div className="space-y-6">
@@ -174,7 +174,7 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                                         {isValidAvatarUrl(avatarPreview) ? (
                                             <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
                                         ) : (
-                                            name[0]?.toUpperCase() || <User className="w-12 h-12" />
+                                            user.name[0]?.toUpperCase() || <User className="w-12 h-12" />
                                         )}
                                     </div>
                                     <input
@@ -276,10 +276,10 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                                     <button
                                         key={bg.id}
                                         onClick={() => setSelectedBg(bg.id)}
-                                        className={`relative aspect - video rounded - lg overflow - hidden border - 2 transition - all ${selectedBg === bg.id
-                                                ? 'border-[#00a884] ring-2 ring-[#00a884]/30'
-                                                : 'border-[#323b42] hover:border-[#8696a0]'
-                                            } `}
+                                        className={`relative aspect-video rounded-lg overflow-hidden border-2 transition-all ${selectedBg === bg.id
+                                            ? 'border-[#00a884] ring-2 ring-[#00a884]/30'
+                                            : 'border-[#323b42] hover:border-[#8696a0]'
+                                            }`}
                                     >
                                         {bg.url ? (
                                             <img src={bg.thumbnail} alt={bg.name} className="w-full h-full object-cover" />
@@ -302,10 +302,10 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                                 {/* Custom Upload */}
                                 <button
                                     onClick={() => customBg ? setSelectedBg('custom') : bgInputRef.current?.click()}
-                                    className={`relative aspect - video rounded - lg overflow - hidden border - 2 transition - all ${selectedBg === 'custom'
-                                            ? 'border-[#00a884] ring-2 ring-[#00a884]/30'
-                                            : 'border-dashed border-[#323b42] hover:border-[#8696a0]'
-                                        } `}
+                                    className={`relative aspect-video rounded-lg overflow-hidden border-2 transition-all ${selectedBg === 'custom'
+                                        ? 'border-[#00a884] ring-2 ring-[#00a884]/30'
+                                        : 'border-dashed border-[#323b42] hover:border-[#8696a0]'
+                                        }`}
                                 >
                                     {customBg ? (
                                         <>

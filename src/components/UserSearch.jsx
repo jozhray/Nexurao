@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { ref, onValue, set, remove, get, query, limitToLast } from 'firebase/database';
-import { Search, Plus, Trash2, ArrowLeft, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Trash2, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
 const isValidAvatarUrl = (url) => {
@@ -104,7 +104,11 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
         const unsubscribe = onValue(historyRef, (snapshot) => {
             sdkLoaded = true;
             if (snapshot.exists()) {
-                setChatHistoryIds(Object.keys(snapshot.val()));
+                const data = snapshot.val();
+                const sortedIds = Object.entries(data)
+                    .sort(([, a], [, b]) => (b.lastActive || 0) - (a.lastActive || 0))
+                    .map(([id]) => id);
+                setChatHistoryIds(sortedIds);
             } else {
                 setChatHistoryIds([]);
             }
@@ -121,7 +125,10 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                 if (response.ok) {
                     const data = await response.json();
                     if (data) {
-                        setChatHistoryIds(Object.keys(data));
+                        const sortedIds = Object.entries(data)
+                            .sort(([, a], [, b]) => (b.lastActive || 0) - (a.lastActive || 0))
+                            .map(([id]) => id);
+                        setChatHistoryIds(sortedIds);
                     }
                 }
             } catch (err) {
@@ -219,7 +226,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
 
     // Filter users - exclude current user and get chat history users
     const otherUsers = allUsers.filter(u => u.id !== currentUser?.id);
-    const chatHistoryUsers = allUsers.filter(u => chatHistoryIds.includes(u.id));
+    const chatHistoryUsers = chatHistoryIds.map(id => allUsers.find(u => u.id === id)).filter(Boolean);
     const contactUsers = allUsers.filter(u => contactIds.includes(u.id));
 
     let displayedUsers = [];
@@ -439,17 +446,6 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
         <div className="h-full min-h-0 flex flex-col bg-[var(--wa-bg)]">
             {/* Header */}
             <div className="p-2 border-b border-[var(--wa-border)] shrink-0 flex items-center gap-2">
-                {(viewMode === 'directory' || viewMode === 'call' || viewMode === 'contacts') && (
-                    <button
-                        onClick={() => {
-                            setViewMode('history');
-                            setSearchTerm('');
-                        }}
-                        className="p-2 text-[#00a884] hover:bg-white/5 rounded-full transition-colors"
-                    >
-                        <ArrowLeft className="w-5 h-5" />
-                    </button>
-                )}
                 <div className="relative flex-1">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         {loading ? (
@@ -476,31 +472,19 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                         </button>
                     )}
                 </div>
-                {viewMode === 'history' && (
-                    <button
-                        onClick={() => {
-                            setViewMode('directory');
-                            setSearchTerm('');
-                        }}
-                        className="p-2 text-[#00a884] hover:bg-white/5 rounded-full transition-colors"
-                        title="New Chat"
-                    >
-                        <Plus className="w-5 h-5" />
-                    </button>
-                )}
             </div>
 
             {/* List */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {viewMode === 'history' && (
                     <div className="px-4 py-3 border-b border-[var(--wa-border)] bg-[var(--wa-bg)] sticky top-0 z-10 flex items-center">
-                        <span className="text-xs font-bold text-[#00a884] uppercase tracking-wider">Recent Chats ({chatHistoryUsers.length})</span>
+                        <span className="text-xs font-bold text-[#00a884] uppercase tracking-wider">Recent Chat ({chatHistoryUsers.length})</span>
                     </div>
                 )}
                 {viewMode === 'directory' && (
                     <div className="px-4 py-3 border-b border-[var(--wa-border)] bg-[var(--wa-bg)] sticky top-0 z-10 flex items-center">
                         <span className="text-xs font-bold text-[#00a884] uppercase tracking-wider">
-                            {searchTerm ? `Search Results (${displayedUsers.length})` : `Recent Chats (${chatHistoryUsers.length})`}
+                            {searchTerm ? `Search Results (${displayedUsers.length})` : `Recent Chat (${chatHistoryUsers.length})`}
                         </span>
                     </div>
                 )}
@@ -555,14 +539,14 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                                     <div className="flex items-center gap-1">
                                                         <button
                                                             onClick={(e) => handleQuickCall(e, user)}
-                                                            className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
+                                                            className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
                                                             title="Call"
                                                         >
                                                             <Phone className="w-5 h-5" />
                                                         </button>
                                                         <button
                                                             onClick={(e) => handleRemoveContact(e, user.id)}
-                                                            className="p-2 text-[#8696a0] hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
+                                                            className="p-2 text-[#8696a0] hover:text-rose-500 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
                                                             title="Remove Contact"
                                                         >
                                                             <UserMinus className="w-5 h-5" />
@@ -620,7 +604,22 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                             <div className="flex-1 min-w-0 py-3 group-hover:border-transparent transition-colors">
                                 <div className="flex justify-between items-baseline mb-1">
                                     <div className="flex flex-col min-w-0">
-                                        <h3 className="text-[17px] font-normal text-[var(--wa-text)] truncate">{user.displayName || user.name}</h3>
+                                        <div className="flex items-center gap-2">
+                                            <h3 className="text-[17px] font-normal text-[var(--wa-text)] truncate">{user.displayName || user.name}</h3>
+                                            {(() => {
+                                                const ids = [currentUser.id, user.id].sort();
+                                                const roomId = `dm_${ids[0]}_${ids[1]}`;
+                                                const count = unreadCounts[roomId];
+                                                if (count > 0) {
+                                                    return (
+                                                        <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#00a884] text-[#111b21] text-[10px] font-black shadow-sm shrink-0">
+                                                            {count}
+                                                        </span>
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
+                                        </div>
                                         <span className="text-xs text-[var(--wa-text-muted)] truncate">@{user.name}</span>
                                         {/* Call info for call view */}
                                         {viewMode === 'call' && (() => {
@@ -645,23 +644,6 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                             }
                                             return null;
                                         })()}
-
-                                        {/* Unread Message Badge */}
-                                        {(() => {
-                                            const ids = [currentUser.id, user.id].sort();
-                                            const roomId = `dm_${ids[0]}_${ids[1]}`;
-                                            const count = unreadCounts[roomId];
-                                            if (count > 0) {
-                                                return (
-                                                    <div className="mt-1">
-                                                        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#00a884] text-[#111b21] text-xs font-bold shadow-sm">
-                                                            {count}
-                                                        </span>
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        })()}
                                     </div>
                                     <div className="flex items-center gap-1">
                                         {/* Quick action buttons for contacts */}
@@ -669,7 +651,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                             <>
                                                 <button
                                                     onClick={() => handleSelectUser(user)}
-                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
+                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
                                                     title="Chat"
                                                 >
                                                     <MessageCircle className="w-6 h-6" />
@@ -683,7 +665,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                                             setTimeout(() => onStartCall(user), 200);
                                                         }
                                                     }}
-                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
+                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
                                                     title="Call"
                                                 >
                                                     <Phone className="w-6 h-6" />
@@ -694,7 +676,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                         {(viewMode === 'history' || (viewMode === 'directory' && !searchTerm) || (viewMode === 'directory' && chatHistoryIds.includes(user.id))) && (
                                             <button
                                                 onClick={(e) => handleQuickCall(e, user)}
-                                                className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
+                                                className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
                                                 title="Call"
                                             >
                                                 <Phone className="w-6 h-6" />
@@ -704,7 +686,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                             <>
                                                 <button
                                                     onClick={(e) => handleQuickCall(e, user)}
-                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
+                                                    className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
                                                     title="Call"
                                                 >
                                                     <Phone className="w-6 h-6" />
@@ -712,7 +694,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                                 {getCallsForUser(user.id).length > 0 && (
                                                     <button
                                                         onClick={(e) => handleShowCallHistory(e, user)}
-                                                        className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
+                                                        className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
                                                         title="View Call History"
                                                     >
                                                         <Info className="w-6 h-6" />
@@ -724,7 +706,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                         {isContact(user.id) ? (
                                             <button
                                                 onClick={(e) => handleRemoveContact(e, user.id)}
-                                                className="p-2 text-[#00a884] hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
+                                                className="p-2 text-[#00a884] hover:text-rose-500 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
                                                 title="Remove from Contacts"
                                             >
                                                 <UserMinus className="w-6 h-6" />
@@ -732,7 +714,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                         ) : (
                                             <button
                                                 onClick={(e) => handleAddContact(e, user)}
-                                                className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
+                                                className="p-2 text-[#8696a0] hover:text-[#00a884] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-[#00a884]/10 rounded-full"
                                                 title="Add to Contacts"
                                             >
                                                 <UserPlus className="w-6 h-6" />
@@ -742,7 +724,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                         {(viewMode === 'history' || (viewMode === 'directory' && !searchTerm) || (viewMode === 'directory' && chatHistoryIds.includes(user.id))) && (
                                             <button
                                                 onClick={(e) => handleDeleteChat(e, user.id)}
-                                                className="p-2 text-[#8696a0] hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
+                                                className="p-2 text-[#8696a0] hover:text-rose-500 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-rose-500/10 rounded-full"
                                                 title="Delete Chat"
                                             >
                                                 <Trash2 className="w-6 h-6" />
