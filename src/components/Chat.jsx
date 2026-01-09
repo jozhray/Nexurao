@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../lib/firebase';
-import { ref, push, onValue, serverTimestamp, query, limitToLast, set, get, remove } from 'firebase/database';
+import { ref, push, onValue, serverTimestamp, query, limitToLast, set, get, remove, update } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Send, Image as ImageIcon, Plus, Check, Phone, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash2, RotateCcw, CornerUpLeft } from 'lucide-react';
 
@@ -48,6 +48,8 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
     // Peer presence/online status
     const [peerStatus, setPeerStatus] = useState({ online: false, lastSeen: null });
+    const [chatClearedAt, setChatClearedAt] = useState(0);
+    const [deletedMessageIds, setDeletedMessageIds] = useState(new Set());
 
     // Check if peer is in contacts
     useEffect(() => {
@@ -69,6 +71,10 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         return null;
     })();
 
+    useEffect(() => {
+        console.log('[Chat] effectivePeerId:', effectivePeerId, 'roomId:', roomId, 'userId:', user?.id);
+    }, [effectivePeerId, roomId, user?.id]);
+
     // Listen to peer's presence status
     useEffect(() => {
         if (!effectivePeerId) return;
@@ -86,6 +92,30 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         });
         return () => unsubscribe();
     }, [effectivePeerId]);
+
+    // Check for cleared chat history
+    useEffect(() => {
+        if (!user?.id || !effectivePeerId) return;
+
+        // Use separate meta node to prevent overwrites from chat list updates
+        const metaRef = ref(db, `user_chat_meta/${user.id}/${effectivePeerId}`);
+        const unsubscribe = onValue(metaRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                setChatClearedAt(data.clearedAt || 0);
+                if (data.deletedMessages) {
+                    setDeletedMessageIds(new Set(Object.keys(data.deletedMessages)));
+                } else {
+                    setDeletedMessageIds(new Set());
+                }
+            } else {
+                setChatClearedAt(0);
+                setDeletedMessageIds(new Set());
+            }
+        });
+
+        return () => unsubscribe();
+    }, [user?.id, effectivePeerId]);
 
     // Format last seen time
     const formatLastSeen = (timestamp) => {
@@ -227,9 +257,16 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             type: 'delete',
             target: msgId,
             title: 'Delete Message',
-            message: 'Are you sure you want to delete this message? This action cannot be undone.',
+            message: 'Delete this message for me?',
             action: () => {
-                remove(ref(db, `messages/${roomId}/${msgId}`));
+                if (!user?.id || !effectivePeerId) return;
+
+                // Add to deletedMessages in meta
+                const metaRef = ref(db, `user_chat_meta/${user.id}/${effectivePeerId}/deletedMessages/${msgId}`);
+                set(metaRef, true);
+
+                // Update local state immediately
+                setDeletedMessageIds(prev => new Set(prev).add(msgId));
                 setConfirmModal(null);
             }
         });
@@ -240,9 +277,25 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             type: 'clear',
             target: null,
             title: 'Clear Chat History',
-            message: 'This will permanently delete all messages in this conversation. Are you sure?',
+            message: 'This will clear the conversation history for you. Messages will remain for the other person.',
             action: () => {
-                remove(ref(db, `messages/${roomId}`));
+                if (!effectivePeerId || !user.id) {
+                    console.error('[Chat] Clear chat blocked: Missing ID. Peer:', effectivePeerId, 'User:', user?.id);
+                    alert('Cannot clear chat: User ID missing. Please refresh and try again.');
+                    return;
+                }
+
+                console.log('[Chat] Clearing chat for user:', user.id, 'peer:', effectivePeerId);
+
+                // Update meta with clearedAt timestamp - separate from chat list
+                const metaRef = ref(db, `user_chat_meta/${user.id}/${effectivePeerId}`);
+                update(metaRef, {
+                    clearedAt: serverTimestamp()
+                }).then(() => console.log('[Chat] Clear timestamp updated in meta'))
+                    .catch(e => console.error('[Chat] Clear update failed', e));
+
+                // Also update local state for immediate feedback
+                setChatClearedAt(Date.now());
                 setConfirmModal(null);
             }
         });
@@ -251,13 +304,13 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
     const updateChatHistory = () => {
         if (!peerId || !user.id) return;
 
-        // Update Sender's History
+        // Update Sender's History (Use update to preserve clearedAt)
         const senderHistoryRef = ref(db, `user_chats/${user.id}/${peerId}`);
-        set(senderHistoryRef, { id: peerId, lastActive: serverTimestamp() });
+        update(senderHistoryRef, { id: peerId, lastActive: serverTimestamp() });
 
         // Update Recipient's History
         const recipientHistoryRef = ref(db, `user_chats/${peerId}/${user.id}`);
-        set(recipientHistoryRef, { id: user.id, lastActive: serverTimestamp() });
+        update(recipientHistoryRef, { id: user.id, lastActive: serverTimestamp() });
 
         // Signal user to open/focus chat
         const invokeRef = ref(db, `users/${peerId}/invokeChat`);
@@ -925,101 +978,107 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                 className="flex-1 overflow-y-auto overflow-x-hidden px-[10px] pt-[10px] pb-8 flex flex-col gap-3 custom-scrollbar"
                 style={{ WebkitOverflowScrolling: 'touch' }}
             >
-                {messages.map((msg, index) => {
-                    const isOwn = msg.userId === user.id;
-                    const prevMsg = messages[index - 1];
-                    const nextMsg = messages[index + 1];
-                    const isLastInGroup = !nextMsg || nextMsg.userId !== msg.userId;
+                {messages
+                    .filter(msg => {
+                        if (deletedMessageIds.has(msg.id)) return false;
+                        if (!chatClearedAt) return true;
+                        return (msg.timestamp || 0) > chatClearedAt;
+                    })
+                    .map((msg, index) => {
+                        const isOwn = msg.userId === user.id;
+                        const prevMsg = messages[index - 1];
+                        const nextMsg = messages[index + 1];
+                        const isLastInGroup = !nextMsg || nextMsg.userId !== msg.userId;
 
-                    // Date divider logic
-                    const msgDate = new Date(msg.timestamp).toDateString();
-                    const prevMsgDate = prevMsg ? new Date(prevMsg.timestamp).toDateString() : null;
-                    const showDateDivider = msgDate !== prevMsgDate;
+                        // Date divider logic
+                        const msgDate = new Date(msg.timestamp).toDateString();
+                        const prevMsgDate = prevMsg ? new Date(prevMsg.timestamp).toDateString() : null;
+                        const showDateDivider = msgDate !== prevMsgDate;
 
-                    // Unread Highlighting Logic
-                    // If unreadCount is 3, the last 3 messages should be checked.
-                    // However, messages are fetched in order. So index >= messages.length - unreadCount
-                    const isUnread = unreadCount > 0 && (index >= messages.length - unreadCount) && !isOwn;
-                    const showUnreadMarker = unreadCount > 0 && (index === messages.length - unreadCount);
+                        // Unread Highlighting Logic
+                        // If unreadCount is 3, the last 3 messages should be checked.
+                        // However, messages are fetched in order. So index >= messages.length - unreadCount
+                        const isUnread = unreadCount > 0 && (index >= messages.length - unreadCount) && !isOwn;
+                        const showUnreadMarker = unreadCount > 0 && (index === messages.length - unreadCount);
 
-                    return (
-                        <React.Fragment key={msg.id}>
-                            {showDateDivider && (
-                                <div className="flex justify-center py-4 first:pt-2 relative z-10">
-                                    <div className="bg-slate-900/60 text-cyan-200/70 text-[11px] px-4 py-1.5 rounded-full shadow-sm uppercase font-bold tracking-widest border border-cyan-500/10 backdrop-blur-md">
-                                        {formatDateDivider(msg.timestamp)}
+                        return (
+                            <React.Fragment key={msg.id}>
+                                {showDateDivider && (
+                                    <div className="flex justify-center py-4 first:pt-2 relative z-10">
+                                        <div className="bg-slate-900/60 text-cyan-200/70 text-[11px] px-4 py-1.5 rounded-full shadow-sm uppercase font-bold tracking-widest border border-cyan-500/10 backdrop-blur-md">
+                                            {formatDateDivider(msg.timestamp)}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
-
-                            {showUnreadMarker && (
-                                <div className="flex justify-center py-4 relative z-10">
-                                    <div className="bg-cyan-500/20 text-cyan-400 text-[10px] px-6 py-1 rounded-full border border-cyan-500/30 font-bold tracking-widest uppercase animate-pulse">
-                                        New Messages Below
-                                    </div>
-                                </div>
-                            )}
-
-                            <div id={`msg-${msg.id}`} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} w-full mb-1 ${isUnread ? 'animate-unread-pulse' : ''}`}>
-                                {/* Sender name for incoming messages */}
-                                {!isOwn && isLastInGroup && (
-                                    <span className="text-[11px] text-cyan-400 font-bold mb-1 ml-3 tracking-wide">{msg.userName || 'Unknown'}</span>
                                 )}
-                                <div className={`
+
+                                {showUnreadMarker && (
+                                    <div className="flex justify-center py-4 relative z-10">
+                                        <div className="bg-cyan-500/20 text-cyan-400 text-[10px] px-6 py-1 rounded-full border border-cyan-500/30 font-bold tracking-widest uppercase animate-pulse">
+                                            New Messages Below
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div id={`msg-${msg.id}`} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} w-full mb-1 ${isUnread ? 'animate-unread-pulse' : ''}`}>
+                                    {/* Sender name for incoming messages */}
+                                    {!isOwn && isLastInGroup && (
+                                        <span className="text-[11px] text-cyan-400 font-bold mb-1 ml-3 tracking-wide">{msg.userName || 'Unknown'}</span>
+                                    )}
+                                    <div className={`
                                         flex flex-col rounded-lg shadow-sm max-w-[85%] md:max-w-[65%] group backdrop-blur-sm transition-all overflow-hidden
                                         ${isOwn
-                                        ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
-                                        : isUnread
-                                            ? 'bg-slate-900/95 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
-                                            : 'bg-slate-900/80 border border-white/10 border-l-4 border-l-slate-500'}
+                                            ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
+                                            : isUnread
+                                                ? 'bg-slate-900/95 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
+                                                : 'bg-slate-900/80 border border-white/10 border-l-4 border-l-slate-500'}
                                         ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}
                                     `}>
 
-                                    {/* Quote Block (Reply) */}
-                                    {msg.replyTo && (
-                                        <div
-                                            className="mx-2 mt-2 p-2 px-3 bg-black/20 rounded-lg border-l-4 border-l-cyan-500 cursor-pointer hover:bg-black/30 transition-colors"
-                                            onClick={() => jumpToMessage(msg.replyTo.id)}
-                                        >
-                                            <p className="text-cyan-400 text-[10px] font-bold uppercase tracking-wider mb-0.5">{msg.replyTo.userName}</p>
-                                            <p className="text-slate-300 text-xs truncate opacity-70 italic">"{msg.replyTo.text}"</p>
+                                        {/* Quote Block (Reply) */}
+                                        {msg.replyTo && (
+                                            <div
+                                                className="mx-2 mt-2 p-2 px-3 bg-black/20 rounded-lg border-l-4 border-l-cyan-500 cursor-pointer hover:bg-black/30 transition-colors"
+                                                onClick={() => jumpToMessage(msg.replyTo.id)}
+                                            >
+                                                <p className="text-cyan-400 text-[10px] font-bold uppercase tracking-wider mb-0.5">{msg.replyTo.userName}</p>
+                                                <p className="text-slate-300 text-xs truncate opacity-70 italic">"{msg.replyTo.text}"</p>
+                                            </div>
+                                        )}
+
+                                        {/* Message Content */}
+                                        <div className={`p-4 pt-3 pb-2 text-[15px] leading-relaxed text-white font-light tracking-wide break-words transition-all duration-500 ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}`}>
+                                            {renderMessage(msg)}
                                         </div>
-                                    )}
 
-                                    {/* Message Content */}
-                                    <div className={`p-4 pt-3 pb-2 text-[15px] leading-relaxed text-white font-light tracking-wide break-words transition-all duration-500 ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}`}>
-                                        {renderMessage(msg)}
-                                    </div>
-
-                                    {/* Footer: Time & Status */}
-                                    <div className={`px-4 py-1.5 flex justify-end items-center gap-1.5 bg-black/20 ${isOwn ? 'text-cyan-400' : isUnread ? 'text-cyan-300' : 'text-slate-500'}`}>
-                                        <button
-                                            onClick={() => {
-                                                const replyText = msg.text || (msg.type === 'voice' ? 'Voice Message' : msg.type === 'image' ? 'Image' : msg.type === 'video' ? 'Video' : msg.type === 'document' ? msg.fileName : 'Attachment');
-                                                setReplyTo({ id: msg.id, text: replyText, userName: msg.userName });
-                                            }}
-                                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-cyan-400 transition-all mr-1"
-                                            title="Reply"
-                                        >
-                                            <CornerUpLeft className="w-3 h-3" />
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteMessage(msg.id)}
-                                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 transition-all mr-auto"
-                                            title="Delete Message"
-                                        >
-                                            <Trash2 className="w-3 h-3" />
-                                        </button>
-                                        <span className="text-[10px] font-mono uppercase tracking-wider opacity-80">
-                                            {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                                        </span>
-                                        {isOwn && <Check className="w-3 h-3 opacity-100" />}
+                                        {/* Footer: Time & Status */}
+                                        <div className={`px-4 py-1.5 flex justify-end items-center gap-1.5 bg-black/20 ${isOwn ? 'text-cyan-400' : isUnread ? 'text-cyan-300' : 'text-slate-500'}`}>
+                                            <button
+                                                onClick={() => {
+                                                    const replyText = msg.text || (msg.type === 'voice' ? 'Voice Message' : msg.type === 'image' ? 'Image' : msg.type === 'video' ? 'Video' : msg.type === 'document' ? msg.fileName : 'Attachment');
+                                                    setReplyTo({ id: msg.id, text: replyText, userName: msg.userName });
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-cyan-400 transition-all mr-1"
+                                                title="Reply"
+                                            >
+                                                <CornerUpLeft className="w-3 h-3" />
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteMessage(msg.id)}
+                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 transition-all mr-auto"
+                                                title="Delete Message"
+                                            >
+                                                <Trash2 className="w-3 h-3" />
+                                            </button>
+                                            <span className="text-[10px] font-mono uppercase tracking-wider opacity-80">
+                                                {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                            </span>
+                                            {isOwn && <Check className="w-3 h-3 opacity-100" />}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        </React.Fragment>
-                    );
-                })}
+                            </React.Fragment>
+                        );
+                    })}
             </div>
 
             {/* Inline Attachment Preview */}
