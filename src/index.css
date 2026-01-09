@@ -1,0 +1,310 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-slate-950: #020617;
+}
+
+:root {
+  --wa-bg: #111b21;
+  --wa-panel: #202c33;
+  --wa-incoming: #202c33;
+  --wa-outgoing: #005c4b;
+  --wa-teal: #00a884;
+  --wa-border: #323b42;
+  --wa-text: #e9edef;
+  --wa-text-muted: #8696a0;
+  --wa-chat-bg: #0b141a;
+  --wa-input-bg: #2a3942;
+}
+
+.light-theme {
+  --wa-bg: #f0f2f5;
+  --wa-panel: #ffffff;
+  --wa-incoming: #ffffff;
+  --wa-outgoing: #d9fdd3;
+  --wa-teal: #00a884;
+  --wa-border: #e9edef;
+  --wa-text: #111b21;
+  --wa-text-muted: #667781;
+  --wa-chat-bg: #efeae2;
+  --wa-input-bg: #ffffff;
+}
+
+/* Base Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: 'Outfit', sans-serif;
+  background-color: var(--wa-bg);
+  color: var(--wa-text);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+#root {
+  height: 100%;
+}
+
+/* Scrollbar refinement */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.light-theme ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.light-theme ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* Custom Utilities */
+.wa-header {
+  height: 60px;
+  background-color: var(--wa-panel);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--wa-border);
+  transition: background-color 0.3s ease;
+}
+
+.wa-input-area {
+  height: 62px;
+  background-color: var(--wa-panel);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  transition: background-color 0.3s ease;
+}
+
+/* Background Pattern for Chat */
+.wa-chat-bg {
+  background-color: var(--wa-chat-bg);
+  background-image: url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png");
+  background-repeat: repeat;
+  opacity: 0.05;
+  /* Subtle texture */
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: background-color 0.3s ease;
+}
+
+.light-theme .wa-chat-bg {
+  opacity: 0.06;
+  filter: none;
+}
+
+@keyframes sun-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes moon-sway {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  25% {
+    transform: rotate(15deg);
+  }
+
+  75% {
+    transform: rotate(-15deg);
+  }
+
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.animate-sun {
+  animation: sun-spin 10s linear infinite;
+}
+
+@keyframes pulse-fast {
+
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.7;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes liquid-glow {
+  0% {
+    left: -100%;
+  }
+
+  100% {
+    left: 100%;
+  }
+}
+
+.animate-liquid {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: liquid-glow 2s infinite;
+  pointer-events: none;
+}
+
+@keyframes pulse-slow {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 0.9;
+  }
+}
+
+.animate-pulse-fast {
+  animation: pulse-fast 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s ease-in-out infinite;
+}
+
+.animate-moon {
+  animation: moon-sway 4s ease-in-out infinite;
+}
+
+/* Weather Animations */
+@keyframes rain {
+  0% {
+    transform: translateY(-20px);
+  }
+
+  100% {
+    transform: translateY(100vh);
+  }
+}
+
+@keyframes snow {
+  0% {
+    transform: translateY(-20px) translateX(0);
+  }
+
+  25% {
+    transform: translateY(30vh) translateX(15px);
+  }
+
+  50% {
+    transform: translateY(60vh) translateX(-15px);
+  }
+
+  75% {
+    transform: translateY(80vh) translateX(5px);
+  }
+
+  100% {
+    transform: translateY(100vh) translateX(0);
+  }
+}
+
+@keyframes leaf-fall {
+  0% {
+    transform: translateX(-10vw) translateY(0) rotate(0deg);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateX(100vw) translateY(20vh) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+.rain {
+  animation: rain linear infinite;
+}
+
+.snow {
+  animation: snow linear infinite;
+}
+
+.leaf {
+  animation: leaf-fall linear infinite;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+@keyframes unread-pulse {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.01);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-unread-pulse {
+  animation: unread-pulse 2s ease-in-out infinite;
+}
+
+@keyframes flash-highlight {
+  0% {
+    background-color: rgba(6, 182, 212, 0);
+  }
+
+  25% {
+    background-color: rgba(6, 182, 212, 0.4);
+  }
+
+  100% {
+    background-color: rgba(6, 182, 212, 0);
+  }
+}
+
+.animate-flash-highlight {
+  animation: flash-highlight 1.5s ease-out forwards;
+}
