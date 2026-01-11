@@ -1,0 +1,30 @@
+{
+    "project_info": {
+        "project_number": "473590056152",
+        "firebase_url": "https://crispconnect-default-rtdb.firebaseio.com",
+        "project_id": "crispconnect",
+        "storage_bucket": "crispconnect.firebasestorage.app"
+    },
+    "client": [
+        {
+            "client_info": {
+                "mobilesdk_app_id": "1:473590056152:android:faf52a8d144e683a2f03ad",
+                "android_client_info": {
+                    "package_name": "crisp.connect"
+                }
+            },
+            "oauth_client": [],
+            "api_key": [
+                {
+                    "current_key": "AIzaSyDD78GNFxMcK3xptNTcsIkmLHlT7dxekN4"
+                }
+            ],
+            "services": {
+                "appinvite_service": {
+                    "other_platform_oauth_client": []
+                }
+            }
+        }
+    ],
+    "configuration_version": "1"
+}

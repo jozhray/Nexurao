@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { ref, update } from 'firebase/database';
-import { X, Camera, User, Save, Upload, Check, Pencil, Image } from 'lucide-react';
+import { X, Camera, User, Save, Upload, Check, Pencil, Image, Music, Play, Pause, Trash2 } from 'lucide-react';
 
 // Preset backgrounds
 const PRESET_BACKGROUNDS = [
@@ -11,6 +11,19 @@ const PRESET_BACKGROUNDS = [
     { id: 'cute-pattern', name: 'Cute Pattern', url: '/bg-cute-pattern.png', thumbnail: '/bg-cute-pattern.png' },
 ];
 
+const PRESET_RINGTONES = [
+    { id: 'default', name: 'Retro Ring', url: '/ringtone.mp3' },
+    { id: 'classic', name: 'Classic Phone', url: '/ringtones/classic.mp3' },
+    { id: 'minimal', name: 'Minimal Pulse', url: '/ringtones/minimal.mp3' },
+];
+
+const PRESET_NOTIFICATION_SOUNDS = [
+    { id: 'default', name: 'Meloboom SMS', url: '/ringtones/message_default.mp3' },
+    { id: 'bell', name: 'Bell Chime', url: '/ringtones/bell.mp3' },
+    { id: 'pop', name: 'Pop Alert', url: '/ringtones/pop.mp3' },
+    { id: 'ping', name: 'Crystal Ping', url: '/ringtones/ping.mp3' },
+];
+
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
 const isValidAvatarUrl = (url) => {
     if (!url || typeof url !== 'string') return false;
@@ -18,8 +31,12 @@ const isValidAvatarUrl = (url) => {
     return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:');
 };
 
-export default function Settings({ user, onClose, onUpdate, chatBackground, onBackgroundChange }) {
-    const [activeTab, setActiveTab] = useState('profile'); // 'profile' or 'background'
+export default function Settings({
+    user, onClose, onUpdate, chatBackground, onBackgroundChange,
+    phoneRingtone, onPhoneRingtoneChange,
+    messageRingtone, onMessageRingtoneChange
+}) {
+    const [activeTab, setActiveTab] = useState('profile'); // 'profile', 'background', 'ringtones'
     const [displayName, setDisplayName] = useState(user.displayName || user.name || '');
     const [about, setAbout] = useState(user.about || 'Hey there! I am using Nexurao.');
     const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '');
@@ -30,8 +47,13 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
     const [selectedBg, setSelectedBg] = useState(chatBackground || 'default');
     const [customBg, setCustomBg] = useState(null);
 
+    const [playingSound, setPlayingSound] = useState(null); // { id, type }
+    const audioRef = useRef(null);
+
     const fileInputRef = useRef(null);
     const bgInputRef = useRef(null);
+    const phoneInputRef = useRef(null);
+    const msgInputRef = useRef(null);
 
     const handleFileChange = (e) => {
         const file = e.target.files?.[0];
@@ -77,6 +99,40 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                 img.src = reader.result;
             };
             reader.readAsDataURL(file);
+        }
+    };
+
+    const handleSoundUpload = (e, type) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            if (file.size > 2 * 1024 * 1024) {
+                alert("File too large! Max 2MB for custom sounds.");
+                return;
+            }
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                if (type === 'phone') onPhoneRingtoneChange(reader.result);
+                else onMessageRingtoneChange(reader.result);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const togglePlaySound = (url, id, type) => {
+        if (playingSound?.id === id && playingSound?.type === type) {
+            if (audioRef.current) {
+                audioRef.current.pause();
+                setPlayingSound(null);
+            }
+        } else {
+            if (audioRef.current) audioRef.current.pause();
+            audioRef.current = new Audio(url);
+            audioRef.current.play().catch(e => {
+                console.warn("Playback failed", e);
+                setPlayingSound(null);
+            });
+            setPlayingSound({ id, type });
+            audioRef.current.onended = () => setPlayingSound(null);
         }
     };
 
@@ -128,7 +184,7 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in p-4">
             <div className="bg-[#111b21] rounded-2xl w-full max-w-[400px] shadow-2xl border border-[#323b42] overflow-hidden max-h-[90vh] flex flex-col">
                 {/* Header */}
-                <div className="bg-[#202c33] px-5 py-4 flex items-center justify-between">
+                <div className="wa-header justify-between shrink-0">
                     <h2 className="text-lg font-medium text-[#e9edef]">Settings</h2>
                     <button
                         onClick={onClose}
@@ -159,6 +215,16 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                     >
                         <Image className="retro-iridescent retro-icon-sm" />
                         Chat Background
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('ringtones')}
+                        className={`flex-1 py-3 px-4 flex items-center justify-center gap-2 text-sm font-medium transition-colors ${activeTab === 'ringtones'
+                            ? 'text-[#00a884] border-b-2 border-[#00a884] bg-white/5'
+                            : 'text-[#8696a0] hover:bg-white/5'
+                            }`}
+                    >
+                        <Music className="retro-iridescent-orange retro-icon-sm" />
+                        Ringtones
                     </button>
                 </div>
 
@@ -265,7 +331,7 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                                 )}
                             </button>
                         </div>
-                    ) : (
+                    ) : activeTab === 'background' ? (
                         /* Change Background Tab */
                         <div className="space-y-4">
                             <p className="text-sm text-[#8696a0]">Choose a chat background</p>
@@ -353,6 +419,121 @@ export default function Settings({ user, onClose, onUpdate, chatBackground, onBa
                                 <Check className="w-5 h-5" />
                                 Apply Background
                             </button>
+                        </div>
+                    ) : (
+                        /* Ringtones Tab */
+                        <div className="space-y-8">
+                            {/* Phone Ringtone */}
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-widest">Phone Ringtone</h3>
+                                    <button
+                                        onClick={() => phoneInputRef.current?.click()}
+                                        className="text-xs text-[#00a884] hover:underline flex items-center gap-1"
+                                    >
+                                        <Upload className="w-3 h-3" /> Upload Custom
+                                    </button>
+                                    <input type="file" ref={phoneInputRef} onChange={(e) => handleSoundUpload(e, 'phone')} accept="audio/*" className="hidden" />
+                                </div>
+                                <div className="space-y-2">
+                                    {PRESET_RINGTONES.map(tone => (
+                                        <div
+                                            key={tone.id}
+                                            onClick={() => onPhoneRingtoneChange(tone.url)}
+                                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all group ${phoneRingtone === tone.url ? 'border-[#00a884] bg-[#00a884]/10' : 'border-[#323b42] bg-[#202c33] hover:border-[#8696a0]'}`}
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); togglePlaySound(tone.url, tone.id, 'phone'); }}
+                                                    className="p-2 rounded-full bg-[#00a884]/20 text-[#00a884] hover:bg-[#00a884]/30 transition-colors"
+                                                    title="Preview Sound"
+                                                >
+                                                    {playingSound?.id === tone.id && playingSound?.type === 'phone' ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                                                </button>
+                                                <span className={`text-sm font-medium transition-colors ${phoneRingtone === tone.url ? 'text-[#00a884]' : 'text-[#e9edef]'}`}>{tone.name}</span>
+                                            </div>
+                                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${phoneRingtone === tone.url ? 'border-[#00a884] bg-[#00a884] scale-110 shadow-[0_0_10px_rgba(0,168,132,0.4)]' : 'border-[#8696a0] group-hover:border-[#00a884]'}`}>
+                                                {phoneRingtone === tone.url && <Check className="w-4 h-4 text-white" />}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {phoneRingtone && !PRESET_RINGTONES.find(t => t.url === phoneRingtone) && (
+                                        <div
+                                            onClick={() => onPhoneRingtoneChange(phoneRingtone)}
+                                            className="flex items-center justify-between p-3 rounded-xl border border-amber-500 bg-amber-500/10 cursor-pointer"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); togglePlaySound(phoneRingtone, 'custom', 'phone'); }}
+                                                    className="p-2 rounded-full bg-amber-500/20 text-amber-500"
+                                                >
+                                                    {playingSound?.id === 'custom' && playingSound?.type === 'phone' ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                                                </button>
+                                                <span className="text-sm text-amber-500 font-bold truncate max-w-[150px]">Custom Ringtone (Active)</span>
+                                            </div>
+                                            <div className="w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center shadow-[0_0_10px_rgba(245,158,11,0.4)]">
+                                                <Check className="w-4 h-4 text-white" />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Message Tone */}
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-widest">Message Tone</h3>
+                                    <button
+                                        onClick={() => msgInputRef.current?.click()}
+                                        className="text-xs text-[#00a884] hover:underline flex items-center gap-1"
+                                    >
+                                        <Upload className="w-3 h-3" /> Upload Custom
+                                    </button>
+                                    <input type="file" ref={msgInputRef} onChange={(e) => handleSoundUpload(e, 'message')} accept="audio/*" className="hidden" />
+                                </div>
+                                <div className="space-y-2">
+                                    {PRESET_NOTIFICATION_SOUNDS.map(tone => (
+                                        <div
+                                            key={tone.id}
+                                            onClick={() => onMessageRingtoneChange(tone.url)}
+                                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all group ${messageRingtone === tone.url ? 'border-[#00a884] bg-[#00a884]/10' : 'border-[#323b42] bg-[#202c33] hover:border-[#8696a0]'}`}
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); togglePlaySound(tone.url, tone.id, 'msg'); }}
+                                                    className="p-2 rounded-full bg-amber-500/20 text-amber-500 hover:bg-amber-500/30 transition-colors"
+                                                    title="Preview Sound"
+                                                >
+                                                    {playingSound?.id === tone.id && playingSound?.type === 'msg' ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                                                </button>
+                                                <span className={`text-sm font-medium transition-colors ${messageRingtone === tone.url ? 'text-[#00a884]' : 'text-[#e9edef]'}`}>{tone.name}</span>
+                                            </div>
+                                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${messageRingtone === tone.url ? 'border-[#00a884] bg-[#00a884] scale-110 shadow-[0_0_10px_rgba(0,168,132,0.4)]' : 'border-[#8696a0] group-hover:border-[#00a884]'}`}>
+                                                {messageRingtone === tone.url && <Check className="w-4 h-4 text-white" />}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {messageRingtone && !PRESET_NOTIFICATION_SOUNDS.find(t => t.url === messageRingtone) && (
+                                        <div
+                                            onClick={() => onMessageRingtoneChange(messageRingtone)}
+                                            className="flex items-center justify-between p-3 rounded-xl border border-amber-500 bg-amber-500/10 cursor-pointer"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); togglePlaySound(messageRingtone, 'custom', 'msg'); }}
+                                                    className="p-2 rounded-full bg-amber-500/20 text-amber-500"
+                                                >
+                                                    {playingSound?.id === 'custom' && playingSound?.type === 'msg' ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                                                </button>
+                                                <span className="text-sm text-amber-500 font-bold truncate max-w-[150px]">Custom Tone (Active)</span>
+                                            </div>
+                                            <div className="w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center shadow-[0_0_10px_rgba(245,158,11,0.4)]">
+                                                <Check className="w-4 h-4 text-white" />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../lib/firebase';
 import { ref, push, onValue, serverTimestamp, query, limitToLast, set, get, remove, update } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Send, Image as ImageIcon, Plus, Check, Phone, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash, RotateCcw, CornerUpLeft, Trash2 } from 'lucide-react';
+import { Send, Image as ImageIcon, Plus, Check, Phone, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash, RotateCcw, CornerUpLeft, Trash2, Clock, Calendar, Edit3, ArrowRight } from 'lucide-react';
 
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
 const isValidAvatarUrl = (url) => {
@@ -10,6 +10,14 @@ const isValidAvatarUrl = (url) => {
     if (url.startsWith('blob:')) return false;
     return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:');
 };
+
+const getLocalISOString = (date) => {
+    const tzOffset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+};
+
+// Notification API endpoint (Vercel serverless function)
+const NOTIFICATION_API_URL = 'https://nexurao.vercel.app/api/send-notification';
 
 export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerId, onStartCall, chatBackground, unreadCount = 0, initialMessageId = null }) {
 
@@ -50,6 +58,10 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
     const [peerStatus, setPeerStatus] = useState({ online: false, lastSeen: null });
     const [chatClearedAt, setChatClearedAt] = useState(0);
     const [deletedMessageIds, setDeletedMessageIds] = useState(new Set());
+    const [scheduledMessages, setScheduledMessages] = useState([]);
+    const [showScheduleModal, setShowScheduleModal] = useState(false);
+    const [scheduleTime, setScheduleTime] = useState('');
+    const [editingScheduledMsg, setEditingScheduledMsg] = useState(null);
 
     // Check if peer is in contacts
     useEffect(() => {
@@ -88,6 +100,65 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         });
         return () => unsubscribe();
     }, [effectivePeerId]);
+
+    // Fetch scheduled messages for this room
+    useEffect(() => {
+        if (!user?.id || !roomId) return;
+        const scheduledRef = ref(db, `scheduled_messages/${user.id}/${roomId}`);
+        const unsubscribe = onValue(scheduledRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const list = Object.entries(data).map(([id, msg]) => ({
+                    id,
+                    ...msg
+                })).sort((a, b) => a.scheduledTime - b.scheduledTime);
+                setScheduledMessages(list);
+            } else {
+                setScheduledMessages([]);
+            }
+        });
+        return () => unsubscribe();
+    }, [user?.id, roomId]);
+
+    // Auto-sender logic
+    useEffect(() => {
+        if (!roomId || !user?.id) return;
+
+        const checkScheduled = () => {
+            const now = Date.now();
+            scheduledMessages.forEach(async (msg) => {
+                if (now >= msg.scheduledTime) {
+                    // Time to send!
+                    try {
+                        const chatRef = ref(db, `messages/${roomId}`);
+                        const newMsg = {
+                            ...msg,
+                            timestamp: serverTimestamp(),
+                        };
+                        const msgId = msg.id;
+                        delete newMsg.id;
+                        delete newMsg.scheduledTime;
+
+                        // Push to real chat
+                        await push(chatRef, newMsg);
+                        // Remove from scheduled
+                        await remove(ref(db, `scheduled_messages/${user.id}/${roomId}/${msgId}`));
+
+                        // Update history
+                        updateChatHistory(msg.text || '📎 Attachment');
+
+                        // Trigger push notification for free background delivery
+                        triggerPushNotification(msg.text || '📎 Sent a scheduled message');
+                    } catch (err) {
+                        console.error("Failed to send scheduled message:", err);
+                    }
+                }
+            });
+        };
+
+        const interval = setInterval(checkScheduled, 3000); // Check every 3 seconds for snappier feel
+        return () => clearInterval(interval);
+    }, [scheduledMessages, roomId, user?.id]);
 
     // Check for cleared chat history
     useEffect(() => {
@@ -287,24 +358,133 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         });
     };
 
-    const updateChatHistory = () => {
-        if (!peerId || !user.id) return;
 
-        // Update Sender's History (Use update to preserve clearedAt)
-        const senderHistoryRef = ref(db, `user_chats/${user.id}/${peerId}`);
-        update(senderHistoryRef, { id: peerId, lastActive: serverTimestamp() });
+    const handleScheduleMessage = async () => {
+        if (!input.trim() && !pendingAttachment) return;
+        if (!scheduleTime) return;
+
+        const scheduledTimestamp = new Date(scheduleTime).getTime();
+        if (scheduledTimestamp <= Date.now()) {
+            alert("Please select a future time.");
+            return;
+        }
+
+        try {
+            const scheduledRef = ref(db, `scheduled_messages/${user.id}/${roomId}`);
+            const msgData = {
+                text: input.trim(),
+                type: pendingAttachment ? pendingAttachment.type : 'text',
+                userId: user.id, // consistency with existing message structure
+                userName: user.displayName || user.name,
+                scheduledTime: scheduledTimestamp,
+                createdAt: serverTimestamp(),
+                ...(pendingAttachment && {
+                    fileUrl: pendingAttachment.url || null,
+                    fileName: pendingAttachment.name || null,
+                    fileSize: pendingAttachment.size || null,
+                    mediaUrl: pendingAttachment.url || null,
+                    audioUrl: pendingAttachment.url || null,
+                    duration: pendingAttachment.duration || null,
+                })
+            };
+
+            if (editingScheduledMsg) {
+                await update(ref(db, `scheduled_messages/${user.id}/${roomId}/${editingScheduledMsg.id}`), msgData);
+                setEditingScheduledMsg(null);
+            } else {
+                await push(scheduledRef, msgData);
+            }
+
+            setInput('');
+            setPendingAttachment(null);
+            setScheduleTime('');
+            setShowScheduleModal(false);
+        } catch (err) {
+            console.error("Failed to schedule message:", err);
+            alert("Failed to schedule message");
+        }
+    };
+
+    const handleDeleteScheduledMessage = async (id) => {
+        try {
+            await remove(ref(db, `scheduled_messages/${user.id}/${roomId}/${id}`));
+        } catch (err) {
+            console.error("Failed to delete scheduled message:", err);
+        }
+    };
+
+    const handleOpenScheduleModal = () => {
+        // Default to 2 minutes from now for convenience
+        const futureDate = new Date(Date.now() + 2 * 60000);
+        setScheduleTime(getLocalISOString(futureDate));
+        setShowScheduleModal(true);
+    };
+
+    const handleEditScheduledMessage = (msg) => {
+        setEditingScheduledMsg(msg);
+        setInput(msg.text || '');
+        setScheduleTime(getLocalISOString(new Date(msg.scheduledTime)));
+        setShowScheduleModal(true);
+    };
+
+    const updateChatHistory = (text = null) => {
+        if (!effectivePeerId || !user?.id) return;
+
+        const baseUpdate = {
+            timestamp: serverTimestamp(),
+            lastActive: serverTimestamp(),
+        };
+
+        if (text) baseUpdate.lastMessage = text;
+
+        // Update Sender's History
+        update(ref(db, `user_chats/${user.id}/${effectivePeerId}`), {
+            ...baseUpdate,
+            id: effectivePeerId,
+            unreadCount: 0
+        });
 
         // Update Recipient's History
-        const recipientHistoryRef = ref(db, `user_chats/${peerId}/${user.id}`);
-        update(recipientHistoryRef, { id: user.id, lastActive: serverTimestamp() });
+        update(ref(db, `user_chats/${effectivePeerId}/${user.id}`), {
+            ...baseUpdate,
+            id: user.id,
+            unreadCount: 1 // Simplified increment
+        });
 
         // Signal user to open/focus chat
-        const invokeRef = ref(db, `users/${peerId}/invokeChat`);
-        set(invokeRef, {
+        set(ref(db, `users/${effectivePeerId}/invokeChat`), {
             roomId: roomId,
-            fromName: user.name,
+            fromName: user.displayName || user.name,
             timestamp: Date.now()
         });
+    };
+
+    const triggerPushNotification = async (text, type = 'text') => {
+        if (!effectivePeerId) return;
+        try {
+            const recipientSnap = await get(ref(db, `users/${effectivePeerId}`));
+            if (recipientSnap.exists()) {
+                const token = recipientSnap.val().fcmToken;
+                if (token) {
+                    await fetch(NOTIFICATION_API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            token: token,
+                            title: `Message from ${user.displayName || user.name}`,
+                            body: text || (type === 'image' ? '📷 Photo' : '📎 Attachment'),
+                            data: {
+                                roomId: roomId,
+                                senderId: user.id,
+                                senderName: user.displayName || user.name
+                            }
+                        })
+                    });
+                }
+            }
+        } catch (err) {
+            console.warn("Failed to trigger push notification", err);
+        }
     };
 
     const handleSend = async (e) => {
@@ -315,7 +495,10 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
         // If there's a pending attachment, send it with optional caption
         if (pendingAttachment) {
-            updateChatHistory(); // Persist chat on attachment send
+            const previewText = pendingAttachment.type === 'document' ? '📎 Document' :
+                pendingAttachment.type === 'image' ? '📷 Photo' :
+                    pendingAttachment.type === 'video' ? '🎥 Video' : '📎 Attachment';
+            updateChatHistory(input.trim() || previewText); // Persist chat on attachment send
             const chatRef = ref(db, `messages/${roomId}`);
             const { type, ...data } = pendingAttachment;
             push(chatRef, {
@@ -329,14 +512,16 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             });
             setPendingAttachment(null);
             setInput('');
+
+            // Trigger push for attachment
+            triggerPushNotification(input.trim() || previewText, type);
             return;
         }
 
         if (!input.trim() || !roomId) return;
 
-        updateChatHistory(); // Persist chat on text send
-
         const currentInput = input;
+        updateChatHistory(currentInput); // Persist chat on text send
         setInput('');
 
         const messageData = {
@@ -380,6 +565,9 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                 setInput(currentInput); // Restore input on failure
             }
         }
+
+        // Trigger push for text message
+        triggerPushNotification(currentInput);
     };
 
     // Document Upload Handler
@@ -740,8 +928,40 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
 
 
+    const [touchStartX, setTouchStartX] = useState(null);
+    const [touchCurrentX, setTouchCurrentX] = useState(null);
+
+    const handleTouchStart = (e) => {
+        setTouchStartX(e.targetTouches[0].clientX);
+        setTouchCurrentX(e.targetTouches[0].clientX);
+    };
+
+    const handleTouchMove = (e) => {
+        setTouchCurrentX(e.targetTouches[0].clientX);
+    };
+
+    const handleTouchEnd = () => {
+        if (touchStartX === null || touchCurrentX === null) return;
+
+        const swipeDistance = touchCurrentX - touchStartX;
+        const minSwipeDistance = 70; // Threshold for swipe
+        const edgeThreshold = 40; // Only allow swipe from left edge
+
+        if (swipeDistance > minSwipeDistance && touchStartX < edgeThreshold) {
+            onBack();
+        }
+
+        setTouchStartX(null);
+        setTouchCurrentX(null);
+    };
+
     return (
-        <div className="flex-1 flex flex-col h-full relative bg-[#0b141a]">
+        <div
+            className="flex-1 flex flex-col h-full relative bg-[#0b141a] overflow-hidden"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+        >
             {/* Background Pattern */}
             {chatBackground?.url ? (
                 <div
@@ -777,7 +997,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                     onClick={() => setPreviewFile(null)}
                 >
                     {/* Header with close and download */}
-                    <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent z-10">
+                    <div className="wa-header fixed top-0 left-0 right-0 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent z-[60] border-none">
                         <div className="text-white">
                             <p className="font-medium truncate max-w-[200px] sm:max-w-md">{previewFile.name}</p>
                             {previewFile.size && (
@@ -1007,7 +1227,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                         <span className="text-[11px] text-cyan-400 font-bold mb-1 ml-3 tracking-wide">{msg.userName || 'Unknown'}</span>
                                     )}
                                     <div className={`
-                                        flex flex-col rounded-lg shadow-sm max-w-[85%] md:max-w-[65%] group backdrop-blur-sm transition-all overflow-hidden
+                                        flex flex-col rounded-lg shadow-sm min-w-[100px] max-w-[85%] md:max-w-[65%] group backdrop-blur-sm transition-all
                                         ${isOwn
                                             ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
                                             : isUnread
@@ -1139,8 +1359,40 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                 </div>
             )}
 
+            {/* Scheduled Messages Overlay (Horizontal Scroll) */}
+            {scheduledMessages.length > 0 && (
+                <div
+                    className="z-10 bg-slate-900/40 border-t border-white/5 backdrop-blur-md px-3 py-3 overflow-x-auto shadow-[0_-10px_20px_rgba(0,0,0,0.3)]"
+                    style={{ WebkitOverflowScrolling: 'touch' }}
+                >
+                    <div className="flex gap-3 min-w-max pb-1 pr-4">
+                        {scheduledMessages.map((msg) => (
+                            <div key={msg.id} className="flex items-center gap-3 bg-slate-800/80 border border-amber-500/30 rounded-xl px-4 py-2 group hover:border-amber-500/60 transition-all animate-in slide-in-from-bottom-4">
+                                <div className="p-2 bg-amber-500/10 rounded-lg">
+                                    <Clock className="w-4 h-4 text-amber-400" />
+                                </div>
+                                <div className="max-w-[200px]">
+                                    <p className="text-[10px] uppercase tracking-wider font-bold text-amber-500/80">
+                                        {new Date(msg.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(msg.scheduledTime).toLocaleDateString()}
+                                    </p>
+                                    <p className="text-sm text-white/90 truncate font-medium">{msg.text || '📎 Attachment'}</p>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => handleEditScheduledMessage(msg)} className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-white/5 rounded-lg transition-colors" title="Edit Schedule">
+                                        <Calendar className="w-4 h-4" />
+                                    </button>
+                                    <button onClick={() => handleDeleteScheduledMessage(msg.id)} className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-white/5 rounded-lg transition-colors" title="Delete">
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Input Area */}
-            <div className="px-2 sm:px-6 py-1 sm:py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative flex items-center">
+            <div className="wa-input-area px-2 sm:px-6 py-1 sm:py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative flex items-center">
                 {/* Subtle top glow line */}
                 <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
 
@@ -1156,9 +1408,9 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                         </div>
                         <button
                             onClick={stopRecording}
-                            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-rose-500 flex items-center justify-center text-white hover:bg-rose-600 transition-all shadow-xl hover:scale-110 active:scale-95 group"
+                            className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-rose-500 flex items-center justify-center text-white hover:bg-rose-600 transition-all shadow-xl hover:scale-110 active:scale-95 group"
                         >
-                            <Square className="w-5 h-5 sm:w-6 sm:h-6 text-white fill-current group-hover:scale-90 transition-transform" />
+                            <Square className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current group-hover:scale-90 transition-transform" />
                         </button>
                     </div>
                 ) : (
@@ -1167,17 +1419,17 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                         <div className="flex items-center gap-0 sm:gap-1">
                             <button
                                 onClick={handleDocumentClick}
-                                className="text-slate-400 hover:text-cyan-400 transition-all p-1.5 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
+                                className="text-slate-400 hover:text-cyan-400 transition-all p-1 sm:p-2 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Attach Document"
                             >
-                                <Plus className="w-6 h-6 sm:w-8 sm:h-8" />
+                                <Plus className="w-5 h-5 sm:w-6 sm:h-6" />
                             </button>
                             <button
                                 onClick={handleMediaClick}
-                                className="text-slate-400 hover:text-cyan-400 transition-all p-1.5 sm:p-3 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
+                                className="text-slate-400 hover:text-cyan-400 transition-all p-1 sm:p-2 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Send Image/Video/GIF"
                             >
-                                <ImageIcon className="w-6 h-6 sm:w-8 sm:h-8" />
+                                <ImageIcon className="w-5 h-5 sm:w-6 sm:h-6" />
                             </button>
                         </div>
 
@@ -1196,30 +1448,40 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                             </div>
 
                             {(input.trim() || pendingAttachment) ? (
-                                <button
-                                    type="submit"
-                                    onClick={handleSend}
-                                    className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded-full flex items-center justify-center bg-gradient-to-tr from-cyan-600 to-cyan-400 text-white shadow-[0_4px_15px_rgba(6,182,212,0.3)] hover:shadow-[0_6px_20px_rgba(6,182,212,0.4)] hover:scale-110 active:scale-95 transition-all duration-300 transform"
-                                >
-                                    <Send className="w-5 h-5 sm:w-6 sm:h-6 sm:ml-1" />
-                                </button>
+                                <div className="flex items-center gap-1.5 sm:gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleOpenScheduleModal}
+                                        className="p-1 sm:p-1.5 rounded-full flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
+                                        title="Schedule Message"
+                                    >
+                                        <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        onClick={handleSend}
+                                        className="w-8 h-8 sm:w-9 sm:h-9 shrink-0 rounded-full flex items-center justify-center bg-gradient-to-tr from-cyan-600 to-cyan-400 text-white shadow-[0_4px_10px_rgba(6,182,212,0.3)] hover:shadow-[0_6px_15px_rgba(6,182,212,0.4)] hover:scale-110 active:scale-95 transition-all duration-300 transform"
+                                    >
+                                        <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                    </button>
+                                </div>
                             ) : (
                                 <div className="flex items-center gap-1 sm:gap-2">
                                     <button
                                         type="button"
                                         onClick={shareLocation}
-                                        className="p-1.5 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
+                                        className="p-1 sm:p-2 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Share Location"
                                     >
-                                        <MapPin className="w-6 h-6 sm:w-8 sm:h-8" />
+                                        <MapPin className="w-5 h-5 sm:w-6 sm:h-6" />
                                     </button>
                                     <button
                                         type="button"
                                         onClick={startRecording}
-                                        className="p-1.5 sm:p-3 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
+                                        className="p-1 sm:p-2 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Record Voice Message"
                                     >
-                                        <Mic className="w-6 h-6 sm:w-8 sm:h-8" />
+                                        <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
                                     </button>
                                 </div>
                             )}
@@ -1286,6 +1548,63 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                             >
                                 {confirmModal.type === 'clear' ? 'Clear All' : 'Delete'}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Scheduled Message Modal */}
+            {showScheduleModal && (
+                <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+                    <div className="bg-[#1f2c34] rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300 ring-1 ring-white/5">
+                        <div className="wa-header justify-between shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
+                                    <Clock className="w-5 h-5 text-amber-400" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white tracking-wide">Schedule Message</h3>
+                            </div>
+                            <button onClick={() => { setShowScheduleModal(false); setEditingScheduledMsg(null); }} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="p-8 space-y-6">
+                            <div className="space-y-4">
+                                <p className="text-sm text-slate-400 leading-relaxed bg-white/5 p-4 rounded-xl border border-white/5 italic">
+                                    "{input.trim() || (pendingAttachment ? pendingAttachment.name : 'Writing message...')}"
+                                </p>
+
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em] ml-1">Select Delivery Time</label>
+                                    <input
+                                        type="datetime-local"
+                                        value={scheduleTime}
+                                        onChange={(e) => setScheduleTime(e.target.value)}
+                                        min={getLocalISOString(new Date())}
+                                        className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:border-amber-500/50 focus:ring-4 focus:ring-amber-500/10 transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    onClick={() => { setShowScheduleModal(false); setEditingScheduledMsg(null); }}
+                                    className="flex-1 py-3.5 rounded-xl bg-white/5 text-slate-300 font-bold hover:bg-white/10 transition-all active:scale-95"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleScheduleMessage}
+                                    disabled={!scheduleTime}
+                                    className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-400 text-white font-bold shadow-lg shadow-amber-500/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed group"
+                                >
+                                    <span className="flex items-center justify-center gap-2">
+                                        {editingScheduledMsg ? 'Update' : 'Schedule'}
+                                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                                    </span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

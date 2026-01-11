@@ -81,21 +81,39 @@ body {
 
 /* Custom Utilities */
 .wa-header {
-  height: 60px;
+  min-height: 60px;
+  /* Support for modern mobile browsers and Capacitor */
+  padding-top: env(safe-area-inset-top, 0px);
+  /* Extra safety check: if env is 0 but it's clearly overlapping, 
+     we might need a more specific mobile class later. 
+     For now, we increase the base padding to be safer. */
   background-color: var(--wa-panel);
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding-left: 16px;
+  padding-right: 16px;
   border-bottom: 1px solid var(--wa-border);
   transition: background-color 0.3s ease;
 }
 
+/* Ensure the app content doesn't get cut off by the status bar */
+@media (display-mode: standalone),
+(max-width: 768px) {
+  .wa-header {
+    /* Hard fallback to 40px for notch compatibility on Android/iOS */
+    padding-top: max(env(safe-area-inset-top, 0px), 40px);
+  }
+}
+
 .wa-input-area {
-  height: 62px;
+  min-height: 62px;
+  /* Hard fallback to 24px for navigation bar compatibility */
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 24px);
   background-color: var(--wa-panel);
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding-left: 16px;
+  padding-right: 16px;
   transition: background-color 0.3s ease;
 }
 

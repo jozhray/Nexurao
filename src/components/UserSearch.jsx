@@ -845,7 +845,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                         {(previewUser.displayName || previewUser.name)?.[0]?.toUpperCase()}
                                     </div>
                                 )}
-                                <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/40 to-transparent">
+                                <div className="wa-header absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/40 to-transparent border-none">
                                     <h2 className="text-white text-lg font-medium drop-shadow-md">{previewUser.displayName || previewUser.name}</h2>
                                     <p className="text-white/60 text-xs drop-shadow-md">@{previewUser.name}</p>
                                 </div>
@@ -932,7 +932,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header */}
-                            <div className="p-4 border-b border-[var(--wa-border)] flex items-center gap-3">
+                            <div className="wa-header p-4 border-b border-[var(--wa-border)] flex items-center gap-3">
                                 <div className="w-12 h-12 rounded-full bg-slate-600 flex items-center justify-center text-white font-semibold text-xl shrink-0">
                                     {isValidAvatarUrl(callHistoryDetail.user?.avatarUrl) ? (
                                         <img src={callHistoryDetail.user.avatarUrl} alt="" className="w-full h-full rounded-full object-cover" />

@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { PushNotifications } from '@capacitor/push-notifications';
+import { App as CapApp } from '@capacitor/app';
 import { db } from './lib/firebase';
 import { ref, onValue, set, serverTimestamp, onDisconnect, get, remove, update, push, query, limitToLast } from 'firebase/database';
 import Auth from './components/Auth';
@@ -23,17 +26,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [showOnline, setShowOnline] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState({});
-  const [activeChat, setActiveChat] = useState(() => {
-    const savedUser = localStorage.getItem('nexurao_user');
-    if (savedUser) {
-      try {
-        const userId = JSON.parse(savedUser).id;
-        const savedChat = localStorage.getItem(`nexurao_active_chat_${userId}`);
-        return savedChat ? JSON.parse(savedChat) : null;
-      } catch (e) { return null; }
-    }
-    return null;
-  }); // { id: roomId, name: otherUserName, peerId: otherUserId }
+  const [activeChat, setActiveChat] = useState(null); // { id: roomId, name: otherUserName, peerId: otherUserId }
   const [showSidebar, setShowSidebar] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -88,9 +81,71 @@ function App() {
   const [notificationPopup, setNotificationPopup] = useState(null); // { title, body, id, user, roomId }
   const [activeCallType, setActiveCallType] = useState('outgoing'); // 'incoming' or 'outgoing'
   const [appLaunchTime] = useState(Date.now()); // Track launch time to avoid notifying old messages
+  const [phoneRingtone, setPhoneRingtone] = useState(() => {
+    const saved = localStorage.getItem('nexurao_phone_ringtone');
+    return saved || '/ringtone.mp3';
+  });
+  const [messageRingtone, setMessageRingtone] = useState(() => {
+    const saved = localStorage.getItem('nexurao_message_ringtone');
+    return saved || '/ringtones/message_default.mp3';
+  });
 
   const callTimeoutRef = useRef(null);
   const ringbackRef = useRef(null);
+  const messageAudioRef = useRef(null);
+  const chatListenersRef = useRef(new Map()); // Map to track per-room unsubscribers
+
+  const sendLocalNotification = async (title, body, id) => {
+    try {
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            title: title,
+            body: body,
+            id: typeof id === 'number' ? id : Math.floor(Math.random() * 1000000),
+            schedule: { at: new Date() }, // Delivery now instead of 1s delay
+            smallIcon: 'ic_stat_notification', // Use the dedicated notification icon
+            iconColor: '#22d3ee', // Cyan color to match theme
+            channelId: 'messages', // Required for Android 8.0+
+            importance: 5, // High importance for pop-up behavior
+            sound: null,
+            attachments: null,
+            actionTypeId: '',
+            extra: null,
+          }
+        ]
+      });
+    } catch (e) {
+      console.error('Notification failed', e);
+    }
+  };
+
+  // System Back Button Handling (Android)
+  useEffect(() => {
+    const handler = CapApp.addListener('backButton', () => {
+      // Prioritize closing the active chat
+      if (activeChat) {
+        setActiveChat(null);
+        return;
+      }
+      // Then close modals
+      if (showSettings) {
+        setShowSettings(false);
+        return;
+      }
+      if (previewUser) {
+        setPreviewUser(null);
+        return;
+      }
+      if (showOnline) {
+        setShowOnline(false);
+        return;
+      }
+      // If none of the above are active, exit the app
+      CapApp.exitApp();
+    });
+    return () => handler.then(h => h.remove());
+  }, [activeChat, showSettings, previewUser, showOnline]);
 
   // Permissions and Event Handlers
   useEffect(() => {
@@ -98,6 +153,26 @@ function App() {
     if ('Notification' in window && Notification.permission !== 'granted') {
       Notification.requestPermission();
     }
+
+    const requestCapacitorPerms = async () => {
+      try {
+        // Create Notification Channel for Android (Required for 8.0+)
+        await LocalNotifications.createChannel({
+          id: 'messages',
+          name: 'Messages',
+          description: 'Chat message notifications',
+          importance: 5,
+          visibility: 1,
+          vibration: true
+        });
+
+        const perms = await LocalNotifications.checkPermissions();
+        if (perms.display !== 'granted') {
+          await LocalNotifications.requestPermissions();
+        }
+      } catch (e) { console.warn("Capacitor Notifications setup failed", e); }
+    };
+    requestCapacitorPerms();
 
     // Suppress global context menu for a more "app-like" experience
     const preventContextMenu = (e) => {
@@ -111,6 +186,74 @@ function App() {
     window.addEventListener('contextmenu', preventContextMenu);
     return () => window.removeEventListener('contextmenu', preventContextMenu);
   }, []);
+
+  // Push Notification Registration & Listeners
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const setupPush = async () => {
+      try {
+        if (!PushNotifications) {
+          console.warn("PushNotifications plugin not available");
+          return;
+        }
+
+        // Request permissions
+        const permStatus = await PushNotifications.requestPermissions();
+        if (permStatus.receive === 'granted') {
+          await PushNotifications.register();
+        }
+
+        // Handle successful registration
+        const regListener = await PushNotifications.addListener('registration', async (token) => {
+          console.log('Push registration success, token: ' + token.value);
+          // Save token to user's profile in Realtime Database
+          await update(ref(db, `users/${user.id}`), {
+            fcmToken: token.value,
+            lastTokenUpdate: serverTimestamp()
+          });
+        });
+
+        // Handle registration error
+        const errListener = await PushNotifications.addListener('registrationError', (error) => {
+          console.error('Push registration error: ', error);
+        });
+
+        // Handle incoming push notification
+        const recListener = await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+          console.log('Push received: ', notification);
+        });
+
+        // Handle tap on notification
+        const actListener = await PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+          console.log('Push action performed: ', notification);
+          const data = notification.notification.data;
+          if (data && data.roomId) {
+            setActiveChat({
+              id: data.roomId,
+              name: data.senderName,
+              peerId: data.senderId
+            });
+          }
+        });
+
+        return () => {
+          regListener.remove();
+          errListener.remove();
+          recListener.remove();
+          actListener.remove();
+        };
+      } catch (e) {
+        console.warn("Push Notification setup failed", e);
+      }
+    };
+
+    const cleanup = setupPush();
+    return () => {
+      cleanup.then(fn => fn && fn());
+      PushNotifications.removeAllListeners();
+    };
+  }, [user?.id]);
 
   // Vibration Priming: satisfy browser's "user gesture" requirement for the entire session
   useEffect(() => {
@@ -432,6 +575,18 @@ function App() {
     localStorage.setItem(`nexurao_missed_calls_${user.id}`, JSON.stringify(missedCallUsers));
   }, [missedCallUsers, user?.id]);
 
+  useEffect(() => {
+    localStorage.setItem('nexurao_phone_ringtone', phoneRingtone);
+  }, [phoneRingtone]);
+
+  useEffect(() => {
+    if (messageRingtone) {
+      localStorage.setItem('nexurao_message_ringtone', messageRingtone);
+    } else {
+      localStorage.removeItem('nexurao_message_ringtone');
+    }
+  }, [messageRingtone]);
+
   // Helper - Handle New Message Logic
   const handleNewMessage = (lastMsg, roomId) => {
     // Validate message
@@ -457,14 +612,32 @@ function App() {
         }));
 
         // Trigger In-App Popup
-        // Skip popup if it's a missed call (the call history listener handles this popup locally)
         setNotificationPopup({
           title: lastMsg.userName || 'New Message',
-          body: lastMsg.text || 'Sent a file',
+          body: lastMsg.text || (lastMsg.type === 'image' ? '📷 Photo' : lastMsg.type === 'video' ? '🎥 Video' : 'File'),
           id: lastMsg.id,
-          roomId: roomId,
-          user: senderUser
+          user: { id: lastMsg.userId, name: lastMsg.userName, avatarUrl: lastMsg.avatarUrl },
+          roomId: roomId
         });
+
+        // Trigger Local Notification (System Tray)
+        sendLocalNotification(
+          lastMsg.userName || 'New Message',
+          lastMsg.text || (lastMsg.type === 'image' ? '📷 Photo' : lastMsg.type === 'video' ? '🎥 Video' : 'File'),
+          lastMsg.id
+        );
+
+        // Play alert sound for message (Optimized: reuse audio object)
+        if (messageRingtone) {
+          try {
+            if (!messageAudioRef.current || messageAudioRef.current.src !== messageRingtone) {
+              messageAudioRef.current = new Audio(messageRingtone);
+            } else {
+              messageAudioRef.current.currentTime = 0;
+            }
+            messageAudioRef.current.play().catch(e => console.warn("Message sound blocked", e));
+          } catch (e) { }
+        }
       }
     }
   };
@@ -477,31 +650,42 @@ function App() {
     const chatListRef = ref(db, `user_chats/${user.id}`);
     const unsubscribeChatList = onValue(chatListRef, (snapshot) => {
       const chats = snapshot.val() || {};
+      const currentRoomIds = new Set();
 
-      // For each chat room, listen to the last message
+      // For each chat room, ensure we have exactly ONE listener
       Object.keys(chats).forEach(userId => {
         const ids = [user.id, userId].sort();
         const roomId = `dm_${ids[0]}_${ids[1]}`;
+        currentRoomIds.add(roomId);
 
-        const lastMsgRef = query(ref(db, `messages/${roomId}`), limitToLast(1));
-        onValue(lastMsgRef, (msgSnap) => {
-          if (msgSnap.exists()) {
-            const msgs = msgSnap.val();
-            // Get ID from the key
-            const lastMsgId = Object.keys(msgs)[0];
-            const lastMsgData = msgs[lastMsgId];
+        if (!chatListenersRef.current.has(roomId)) {
+          const lastMsgRef = query(ref(db, `messages/${roomId}`), limitToLast(1));
+          const unsubRoom = onValue(lastMsgRef, (msgSnap) => {
+            if (msgSnap.exists()) {
+              const msgs = msgSnap.val();
+              const lastMsgId = Object.keys(msgs)[0];
+              handleNewMessage({ id: lastMsgId, ...msgs[lastMsgId] }, roomId);
+            }
+          });
+          chatListenersRef.current.set(roomId, unsubRoom);
+        }
+      });
 
-            // Construct full message object
-            const lastMsg = { id: lastMsgId, ...lastMsgData };
-
-            handleNewMessage(lastMsg, roomId);
-          }
-        });
+      // Cleanup listeners for rooms no longer in the chat list
+      chatListenersRef.current.forEach((unsub, roomId) => {
+        if (!currentRoomIds.has(roomId)) {
+          unsub();
+          chatListenersRef.current.delete(roomId);
+        }
       });
     });
 
-    return () => unsubscribeChatList();
-  }, [user]); // Removed activeChat logic from dependencies to prevent re-subscribing
+    return () => {
+      unsubscribeChatList();
+      chatListenersRef.current.forEach(unsub => unsub());
+      chatListenersRef.current.clear();
+    };
+  }, [user?.id]);
 
   // Missed Call Listener
   useEffect(() => {
@@ -544,6 +728,9 @@ function App() {
               user: callerUser,
               type: 'missed_call'
             });
+
+            // Trigger Local Notification for Missed Call
+            sendLocalNotification('Missed Call', 'You have a missed voice call', logId);
           }
         }
       }
@@ -564,7 +751,8 @@ function App() {
     const recipientId = activeChat.peerId;
     const callData = {
       callerId: user.id,
-      callerName: user.name,
+      callerName: user.displayName || user.name,
+      callerAvatar: isValidAvatarUrl(user.avatarUrl) ? user.avatarUrl : null,
       roomId: activeChat.id,
       status: 'ringing',
       timestamp: Date.now()
@@ -753,6 +941,7 @@ function App() {
             logCallToHistory(callData.callerId, 'missed');
           }
         }}
+        ringtone={phoneRingtone}
       />
 
       {showSettings && (
@@ -762,6 +951,10 @@ function App() {
           onUpdate={(updatedUser) => setUser(updatedUser)}
           chatBackground={chatBackground.id}
           onBackgroundChange={(bgData) => setChatBackground(bgData)}
+          phoneRingtone={phoneRingtone}
+          onPhoneRingtoneChange={setPhoneRingtone}
+          messageRingtone={messageRingtone}
+          onMessageRingtoneChange={setMessageRingtone}
         />
       )}
 
@@ -776,8 +969,12 @@ function App() {
               <Minimize2 className="w-5 h-5" />
             </button>
 
-            <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-[#00a884] to-[#02d98b] flex items-center justify-center text-white text-4xl font-bold mb-6 shadow-lg animate-pulse">
-              {activeChat?.name?.[0]?.toUpperCase() || '?'}
+            <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-[#00a884] to-[#02d98b] flex items-center justify-center text-white text-4xl font-bold mb-6 shadow-lg animate-pulse overflow-hidden">
+              {isValidAvatarUrl(activeChat.avatarUrl) ? (
+                <img src={activeChat.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                activeChat?.name?.[0]?.toUpperCase() || '?'
+              )}
             </div>
             <h2 className="text-xl font-semibold text-[#e9edef] mb-1">{activeChat?.name || 'Unknown'}</h2>
             <p className="text-sm text-[#8696a0] mb-8">
@@ -800,8 +997,12 @@ function App() {
             onClick={() => setIsOutgoingMinimized(false)}
             className="bg-[#00a884] text-white px-4 py-3 rounded-2xl shadow-2xl border border-white/20 flex items-center gap-3 cursor-pointer hover:scale-105 transition-transform"
           >
-            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold">
-              {activeChat?.name?.[0]?.toUpperCase() || '?'}
+            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold overflow-hidden shrink-0">
+              {isValidAvatarUrl(activeChat.avatarUrl) ? (
+                <img src={activeChat.avatarUrl} alt="DP" className="w-full h-full object-cover" />
+              ) : (
+                activeChat?.name?.[0]?.toUpperCase() || '?'
+              )}
             </div>
             <div className="flex flex-col">
               <span className="text-xs font-bold whitespace-nowrap">Calling {activeChat?.name}</span>
@@ -817,7 +1018,7 @@ function App() {
 
           {/* LEFT PANEL */}
           <div className={`flex flex-col border-r border-[#323b42] h-full w-full md:w-[35%] lg:w-[30%] min-w-[300px] ${activeChat ? 'hidden md:flex' : 'flex'} ${theme === 'light' ? 'bg-white' : 'bg-[#111b21]'}`}>
-            <div className="h-[60px] bg-[var(--wa-panel)] flex items-center justify-between px-4 border-b border-[var(--wa-border)] shrink-0">
+            <div className="wa-header justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <div
                   className="w-10 h-10 rounded-full bg-slate-600 overflow-hidden cursor-pointer hover:ring-2 hover:ring-[var(--wa-teal)]/30 transition-all shrink-0"
@@ -888,7 +1089,7 @@ function App() {
             />
 
             {/* Theme Switcher */}
-            <div className="mt-auto border-t border-[var(--wa-border)] p-2 bg-[var(--wa-bg)] shrink-0 relative z-10">
+            <div className="wa-input-area mt-auto border-t border-[var(--wa-border)] p-2 bg-[var(--wa-bg)] shrink-0 relative z-10">
               <div className="w-full grid grid-cols-[1fr_40px_1fr] gap-2 items-center bg-[var(--wa-panel)] rounded-full p-1 border border-[var(--wa-border)] group hover:border-[#00a884]/50 hover:shadow-lg hover:shadow-[#00a884]/10 transition-all duration-300 transform hover:scale-[1.02]">
                 <button
                   onClick={toggleTheme}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { db } from '../lib/firebase';
 import { ref, onValue, update, remove } from 'firebase/database';
 import { Phone, PhoneOff, X, Minimize2, VolumeX, Volume2, Maximize2 } from 'lucide-react';
@@ -6,7 +7,14 @@ import { Phone, PhoneOff, X, Minimize2, VolumeX, Volume2, Maximize2 } from 'luci
 // Ringtone URL (loopable)
 const RINGTONE_URL = '/ringtone.mp3';
 
-export default function IncomingCall({ currentUser, onAccept, onDecline, onMissed }) {
+// Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
+const isValidAvatarUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    if (url.startsWith('blob:')) return false;
+    return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:');
+};
+
+export default function IncomingCall({ currentUser, onAccept, onDecline, onMissed, ringtone }) {
     const [incomingCall, setIncomingCall] = useState(null);
     const [isMinimized, setIsMinimized] = useState(false);
     const [isSilent, setIsSilent] = useState(false);
@@ -30,6 +38,24 @@ export default function IncomingCall({ currentUser, onAccept, onDecline, onMisse
             if (data && data.status === 'ringing') {
                 setIncomingCall(data);
                 interactionRef.current = false; // Reset interaction flag
+
+                // Trigger Local Notification for Call
+                try {
+                    LocalNotifications.schedule({
+                        notifications: [
+                            {
+                                title: 'Incoming Notification Call',
+                                body: `Voice call from ${data.callerName}`,
+                                id: Math.floor(Math.random() * 1000000),
+                                schedule: { at: new Date(Date.now() + 100) },
+                                sound: null,
+                                extra: null
+                            }
+                        ]
+                    });
+                } catch (e) {
+                    console.error("Failed to schedule call notification", e);
+                }
             } else {
                 // Call ended or status changed
                 if (prevCall && prevCall.status === 'ringing' && !interactionRef.current) {
@@ -76,7 +102,7 @@ export default function IncomingCall({ currentUser, onAccept, onDecline, onMisse
     useEffect(() => {
         if (incomingCall && !isSilent) {
             if (!ringtoneRef.current) {
-                ringtoneRef.current = new Audio(RINGTONE_URL);
+                ringtoneRef.current = new Audio(ringtone || RINGTONE_URL);
                 ringtoneRef.current.loop = true;
             }
             ringtoneRef.current.play().catch(e => console.warn("Ringtone autoplay blocked:", e));
@@ -94,7 +120,7 @@ export default function IncomingCall({ currentUser, onAccept, onDecline, onMisse
                 ringtoneRef.current.pause();
             }
         };
-    }, [incomingCall, isSilent]);
+    }, [incomingCall, isSilent, ringtone]);
 
     const handleAccept = () => {
         if (!incomingCall || !currentUser) return;
@@ -127,8 +153,12 @@ export default function IncomingCall({ currentUser, onAccept, onDecline, onMisse
                     onClick={() => setIsMinimized(false)}
                     className="bg-[#00a884] text-white px-4 py-3 rounded-2xl shadow-2xl border border-white/20 flex items-center gap-3 cursor-pointer hover:scale-105 transition-transform"
                 >
-                    <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold">
-                        {incomingCall.callerName?.[0]?.toUpperCase()}
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00a884] to-[#02d98b] overflow-hidden flex items-center justify-center text-white text-lg font-bold shrink-0">
+                        {isValidAvatarUrl(incomingCall.callerAvatar) ? (
+                            <img src={incomingCall.callerAvatar} alt="DP" className="w-full h-full object-cover" />
+                        ) : (
+                            incomingCall.callerName?.[0]?.toUpperCase()
+                        )}
                     </div>
                     <div className="flex flex-col">
                         <span className="text-xs font-bold whitespace-nowrap">Call from {incomingCall.callerName}</span>
@@ -155,8 +185,12 @@ export default function IncomingCall({ currentUser, onAccept, onDecline, onMisse
                 </div>
 
                 {/* Caller Avatar */}
-                <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-[#00a884] to-[#02d98b] flex items-center justify-center text-white text-4xl font-bold mb-6 shadow-lg animate-pulse">
-                    {incomingCall.callerName?.[0]?.toUpperCase() || '?'}
+                <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-[#00a884] to-[#02d98b] flex items-center justify-center text-white text-4xl font-bold mb-6 shadow-lg animate-pulse overflow-hidden">
+                    {isValidAvatarUrl(incomingCall.callerAvatar) ? (
+                        <img src={incomingCall.callerAvatar} alt="DP" className="w-full h-full object-cover" />
+                    ) : (
+                        incomingCall.callerName?.[0]?.toUpperCase() || '?'
+                    )}
                 </div>
 
                 <h2 className="text-xl font-semibold text-[#e9edef] mb-1">
