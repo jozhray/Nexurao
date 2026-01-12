@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { App as CapApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { db } from './lib/firebase';
 import { ref, onValue, set, serverTimestamp, onDisconnect, get, remove, update, push, query, limitToLast } from 'firebase/database';
 import Auth from './components/Auth';
@@ -97,6 +98,7 @@ function App() {
 
   const sendLocalNotification = async (title, body, id) => {
     try {
+      if (Capacitor.getPlatform() === 'web') return;
       await LocalNotifications.schedule({
         notifications: [
           {
@@ -122,29 +124,36 @@ function App() {
 
   // System Back Button Handling (Android)
   useEffect(() => {
-    const handler = CapApp.addListener('backButton', () => {
-      // Prioritize closing the active chat
-      if (activeChat) {
-        setActiveChat(null);
-        return;
-      }
-      // Then close modals
-      if (showSettings) {
-        setShowSettings(false);
-        return;
-      }
-      if (previewUser) {
-        setPreviewUser(null);
-        return;
-      }
-      if (showOnline) {
-        setShowOnline(false);
-        return;
-      }
-      // If none of the above are active, exit the app
-      CapApp.exitApp();
-    });
-    return () => handler.then(h => h.remove());
+    let handler;
+    const setupHandler = async () => {
+      if (Capacitor.getPlatform() === 'web') return;
+      handler = await CapApp.addListener('backButton', () => {
+        // Prioritize closing the active chat
+        if (activeChat) {
+          setActiveChat(null);
+          return;
+        }
+        // Then close modals
+        if (showSettings) {
+          setShowSettings(false);
+          return;
+        }
+        if (previewUser) {
+          setPreviewUser(null);
+          return;
+        }
+        if (showOnline) {
+          setShowOnline(false);
+          return;
+        }
+        // If none of the above are active, exit the app
+        CapApp.exitApp();
+      });
+    };
+    setupHandler();
+    return () => {
+      if (handler) handler.remove();
+    };
   }, [activeChat, showSettings, previewUser, showOnline]);
 
   // Permissions and Event Handlers
@@ -156,6 +165,8 @@ function App() {
 
     const requestCapacitorPerms = async () => {
       try {
+        if (Capacitor.getPlatform() === 'web') return; // Skip on web to avoid "Not implemented" errors
+
         // Create Notification Channel for Android (Required for 8.0+)
         await LocalNotifications.createChannel({
           id: 'messages',
@@ -170,21 +181,14 @@ function App() {
         if (perms.display !== 'granted') {
           await LocalNotifications.requestPermissions();
         }
-      } catch (e) { console.warn("Capacitor Notifications setup failed", e); }
-    };
-    requestCapacitorPerms();
-
-    // Suppress global context menu for a more "app-like" experience
-    const preventContextMenu = (e) => {
-      // Allow context menu only on input/textarea if needed, 
-      // but generally suppression is desired for custom long-press apps
-      if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
-        e.preventDefault();
+      } catch (e) {
+        // Only warn if it's not the unrelated web implementation error
+        if (e?.message !== 'Not implemented on web.') {
+          console.warn("Capacitor Notifications setup failed", e);
+        }
       }
     };
-
-    window.addEventListener('contextmenu', preventContextMenu);
-    return () => window.removeEventListener('contextmenu', preventContextMenu);
+    requestCapacitorPerms();
   }, []);
 
   // Push Notification Registration & Listeners
@@ -192,6 +196,7 @@ function App() {
     if (!user?.id) return;
 
     const setupPush = async () => {
+      if (Capacitor.getPlatform() === 'web') return;
       try {
         if (!PushNotifications) {
           console.warn("PushNotifications plugin not available");
@@ -250,21 +255,21 @@ function App() {
 
     const cleanup = setupPush();
     return () => {
-      cleanup.then(fn => fn && fn());
-      PushNotifications.removeAllListeners();
+      if (Capacitor.getPlatform() !== 'web') {
+        cleanup.then(fn => fn && fn());
+        PushNotifications.removeAllListeners();
+      }
     };
   }, [user?.id]);
 
-  // Vibration Priming: satisfy browser's "user gesture" requirement for the entire session
+  // Vibration Priming
   useEffect(() => {
     const enableVibration = () => {
       try {
         if (window.navigator?.vibrate) {
           window.navigator.vibrate(0);
         }
-      } catch (err) {
-        // Silently ignore priming failures
-      }
+      } catch (err) { }
       window.removeEventListener('touchstart', enableVibration);
       window.removeEventListener('mousedown', enableVibration);
       window.removeEventListener('pointerdown', enableVibration);
@@ -282,27 +287,11 @@ function App() {
     };
   }, []);
 
-  const sendNotification = (title, body, icon, tag) => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      const n = new Notification(title, { body, icon, tag });
-      n.onclick = function () {
-        window.focus();
-        this.close();
-      };
-
-      // Play sound
-      const audio = new Audio('/notification.mp3'); // Assuming you have one, or use a default URL or existing sound
-      // For now, let's reuse a simple beep or just rely on system sound if possible, or silence if no file.
-      // We'll leave audio out for now to avoid 404s until a file is added, or use a data URI sound if wanted.
-    }
-  };
-
   useEffect(() => {
     const savedUser = localStorage.getItem('nexurao_user');
     if (savedUser) {
       try {
         const parsed = JSON.parse(savedUser);
-        // Fix for "Not allowed to load local resource: blob:..." error for avatar
         if (parsed.avatarUrl && parsed.avatarUrl.startsWith('blob:')) {
           parsed.avatarUrl = null;
         }
@@ -317,7 +306,6 @@ function App() {
   useEffect(() => {
     const cleanupLegacyData = async () => {
       try {
-        // Clean users
         const usersRef = ref(db, 'users');
         const snapshot = await get(usersRef);
         if (snapshot.exists()) {
@@ -328,49 +316,7 @@ function App() {
             }
           }
         }
-        // Clean user_contacts
-        const contactsRef = ref(db, 'user_contacts');
-        const contactsSnap = await get(contactsRef);
-        if (contactsSnap.exists()) {
-          const allContacts = contactsSnap.val();
-          for (const [ownerId, contacts] of Object.entries(allContacts)) {
-            if (contacts && typeof contacts === 'object') {
-              for (const [contactId, contactData] of Object.entries(contacts)) {
-                if (contactData?.avatarUrl && (contactData.avatarUrl.startsWith('blob:') || !isValidAvatarUrl(contactData.avatarUrl))) {
-                  await update(ref(db, `user_contacts/${ownerId}/${contactId}`), { avatarUrl: null });
-                }
-              }
-            }
-          }
-        }
-        // Clean user_chats (Remove blob URLs and legacy clearedAt)
-        const chatsRef = ref(db, 'user_chats');
-        const chatsSnap = await get(chatsRef);
-        if (chatsSnap.exists()) {
-          const allChats = chatsSnap.val();
-          for (const [ownerId, chats] of Object.entries(allChats)) {
-            if (chats && typeof chats === 'object') {
-              for (const [chatId, chatData] of Object.entries(chats)) {
-                const updates = {};
-                // Remove invalid avatars
-                if (chatData?.avatarUrl && (chatData.avatarUrl.startsWith('blob:') || !isValidAvatarUrl(chatData.avatarUrl))) {
-                  updates.avatarUrl = null;
-                }
-                // Remove legacy clearedAt (now in user_chat_meta)
-                if (chatData?.clearedAt !== undefined) {
-                  updates.clearedAt = null;
-                }
-
-                if (Object.keys(updates).length > 0) {
-                  await update(ref(db, `user_chats/${ownerId}/${chatId}`), updates);
-                }
-              }
-            }
-          }
-        }
-      } catch (err) {
-        // Silent fail for cleanup in production
-      }
+      } catch (err) { }
     };
     cleanupLegacyData();
   }, []);
@@ -382,20 +328,17 @@ function App() {
     const onlineRef = ref(db, `presence/global`);
     const userStatusRef = ref(db, `users/${user.id}`);
 
-    // Update presence
     set(userPresenceRef, {
       id: user.id,
       name: user.name,
       lastActive: serverTimestamp()
     });
 
-    // Set user as online
     update(userStatusRef, {
       online: true,
       lastSeen: serverTimestamp()
     });
 
-    // On disconnect: remove presence and set offline with lastSeen timestamp
     onDisconnect(userPresenceRef).remove();
     onDisconnect(userStatusRef).update({
       online: false,
@@ -413,7 +356,6 @@ function App() {
     return () => {
       unsubscribe();
       remove(userPresenceRef);
-      // Set offline when component unmounts
       update(userStatusRef, {
         online: false,
         lastSeen: Date.now()
@@ -440,21 +382,49 @@ function App() {
     }
   };
 
-  const startDirectChat = (otherUser, allowAutoCall = true, initialMessageId = null) => {
-    const ids = [user.id, otherUser.id].sort();
-    const dmRoomId = `dm_${ids[0]}_${ids[1]}`;
-    const newChat = {
-      id: dmRoomId,
-      name: otherUser.displayName || otherUser.name,
-      peerId: otherUser.id,
-      avatarUrl: isValidAvatarUrl(otherUser.avatarUrl) ? otherUser.avatarUrl : null,
-      initialMessageId
-    };
+  const startDirectChat = (item, allowAutoCall = true, initialMessageId = null, matchingMsgIds = [], searchTerm = '') => {
+    let newChat;
+
+    if (item.type === 'group') {
+      newChat = {
+        id: item.id,
+        name: item.name,
+        peerId: null,
+        type: 'group',
+        avatarUrl: null,
+        initialMessageId,
+        matchingMsgIds,
+        searchTerm
+      };
+    } else if (item.type === 'broadcast') {
+      newChat = {
+        id: item.id,
+        name: item.name,
+        peerId: null,
+        type: 'broadcast',
+        recipients: item.recipients,
+        avatarUrl: null,
+        initialMessageId
+      };
+    } else {
+      const ids = [user.id, item.id].sort();
+      const dmRoomId = `dm_${ids[0]}_${ids[1]}`;
+      newChat = {
+        id: dmRoomId,
+        name: item.displayName || item.name,
+        peerId: item.id,
+        avatarUrl: isValidAvatarUrl(item.avatarUrl) ? item.avatarUrl : null,
+        initialMessageId,
+        matchingMsgIds,
+        searchTerm,
+        type: 'direct'
+      };
+    }
+
     setActiveChat(newChat);
     setShowSidebar(false);
 
-    if (allowAutoCall && searchViewMode === 'call') {
-      // Small delay to ensure activeChat is updated before initiation
+    if (allowAutoCall && searchViewMode === 'call' && (!item.type || item.type === 'user' || item.type === 'direct')) {
       setTimeout(() => {
         initiateCallFromActiveChat(newChat);
       }, 100);
@@ -491,13 +461,10 @@ function App() {
     }, 45000);
   };
 
-
-  // Refs for tracking state inside listeners without triggering re-renders
   const activeChatRef = useRef(null);
   const notifiedMessagesRef = useRef(new Set());
   const persistenceLoadedForRef = useRef(null);
 
-  // Load user-specific persistence on login
   useEffect(() => {
     if (!user) {
       persistenceLoadedForRef.current = null;
@@ -505,20 +472,16 @@ function App() {
     }
 
     if (persistenceLoadedForRef.current !== user.id) {
-
-      // Load active chat
       const savedChat = localStorage.getItem(`nexurao_active_chat_${user.id}`);
       if (savedChat) {
         try { setActiveChat(JSON.parse(savedChat)); } catch (e) { }
       }
 
-      // Load unread counts
       const savedCounts = localStorage.getItem(`nexurao_unread_counts_${user.id}`);
       if (savedCounts) {
         try { setUnreadCounts(JSON.parse(savedCounts)); } catch (e) { }
       }
 
-      // Load missed calls
       const savedMissed = localStorage.getItem(`nexurao_missed_calls_${user.id}`);
       if (savedMissed) {
         try { setMissedCallUsers(JSON.parse(savedMissed)); } catch (e) { }
@@ -528,13 +491,10 @@ function App() {
     }
   }, [user?.id]);
 
-  // Update ref whenever activeChat changes
   useEffect(() => {
     activeChatRef.current = activeChat;
 
-    // Clear unread count for the opened chat
     if (activeChat) {
-      // Clear popup if it's for this room
       if (notificationPopup?.roomId === activeChat.id) {
         setNotificationPopup(null);
       }
@@ -554,7 +514,6 @@ function App() {
       setCurrentChatUnreadCount(0);
     }
 
-    // Persistence: activeChat (User Specific)
     if (user && persistenceLoadedForRef.current === user.id) {
       if (activeChat) {
         localStorage.setItem(`nexurao_active_chat_${user.id}`, JSON.stringify(activeChat));
@@ -564,7 +523,6 @@ function App() {
     }
   }, [activeChat, user?.id]);
 
-  // Persistence: Notification counts (keyed by user ID)
   useEffect(() => {
     if (!user || persistenceLoadedForRef.current !== user.id) return;
     localStorage.setItem(`nexurao_unread_counts_${user.id}`, JSON.stringify(unreadCounts));
@@ -587,31 +545,21 @@ function App() {
     }
   }, [messageRingtone]);
 
-  // Helper - Handle New Message Logic
   const handleNewMessage = (lastMsg, roomId) => {
-    // Validate message
     if (!lastMsg || !lastMsg.id || !lastMsg.timestamp) return;
 
-    // Notification Logic
-    // 1. Must be from someone else
-    // 2. Must be newer than app launch (real-time only)
-    // 3. Must NOT have been notified already (deduping)
     if (lastMsg.userId !== user.id &&
       lastMsg.timestamp > appLaunchTime &&
       !notifiedMessagesRef.current.has(lastMsg.id)) {
 
-      // Mark as handled
       notifiedMessagesRef.current.add(lastMsg.id);
 
-      // Check if we are already in this chat (using Ref to be always current)
       if (activeChatRef.current?.id !== roomId) {
-        // Update unread count
         setUnreadCounts(prev => ({
           ...prev,
           [roomId]: (prev[roomId] || 0) + 1
         }));
 
-        // Trigger In-App Popup
         setNotificationPopup({
           title: lastMsg.userName || 'New Message',
           body: lastMsg.text || (lastMsg.type === 'image' ? '📷 Photo' : lastMsg.type === 'video' ? '🎥 Video' : 'File'),
@@ -620,14 +568,12 @@ function App() {
           roomId: roomId
         });
 
-        // Trigger Local Notification (System Tray)
         sendLocalNotification(
           lastMsg.userName || 'New Message',
           lastMsg.text || (lastMsg.type === 'image' ? '📷 Photo' : lastMsg.type === 'video' ? '🎥 Video' : 'File'),
           lastMsg.id
         );
 
-        // Play alert sound for message (Optimized: reuse audio object)
         if (messageRingtone) {
           try {
             if (!messageAudioRef.current || messageAudioRef.current.src !== messageRingtone) {
@@ -646,13 +592,12 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
-    // 1. Listen to user's chat list to get all room IDs
+    const currentRoomIds = new Set();
+
+    // 1. Listen to user's chat list
     const chatListRef = ref(db, `user_chats/${user.id}`);
     const unsubscribeChatList = onValue(chatListRef, (snapshot) => {
       const chats = snapshot.val() || {};
-      const currentRoomIds = new Set();
-
-      // For each chat room, ensure we have exactly ONE listener
       Object.keys(chats).forEach(userId => {
         const ids = [user.id, userId].sort();
         const roomId = `dm_${ids[0]}_${ids[1]}`;
@@ -660,38 +605,61 @@ function App() {
 
         if (!chatListenersRef.current.has(roomId)) {
           const lastMsgRef = query(ref(db, `messages/${roomId}`), limitToLast(1));
-          const unsubRoom = onValue(lastMsgRef, (msgSnap) => {
+          const unsub = onValue(lastMsgRef, (msgSnap) => {
             if (msgSnap.exists()) {
               const msgs = msgSnap.val();
               const lastMsgId = Object.keys(msgs)[0];
               handleNewMessage({ id: lastMsgId, ...msgs[lastMsgId] }, roomId);
             }
           });
-          chatListenersRef.current.set(roomId, unsubRoom);
+          chatListenersRef.current.set(roomId, unsub);
         }
       });
+    });
 
-      // Cleanup listeners for rooms no longer in the chat list
+    // 2. Listen to user's groups list
+    const groupListRef = ref(db, `user_groups/${user.id}`);
+    const unsubscribeGroupList = onValue(groupListRef, (snapshot) => {
+      const gList = snapshot.val() || {};
+      Object.keys(gList).forEach(groupId => {
+        currentRoomIds.add(groupId);
+        if (!chatListenersRef.current.has(groupId)) {
+          const lastMsgRef = query(ref(db, `messages/${groupId}`), limitToLast(1));
+          const unsub = onValue(lastMsgRef, (msgSnap) => {
+            if (msgSnap.exists()) {
+              const msgs = msgSnap.val();
+              const lastMsgId = Object.keys(msgs)[0];
+              handleNewMessage({ id: lastMsgId, ...msgs[lastMsgId] }, groupId);
+            }
+          });
+          chatListenersRef.current.set(groupId, unsub);
+        }
+      });
+    });
+
+    const cleanupInterval = setInterval(() => {
       chatListenersRef.current.forEach((unsub, roomId) => {
         if (!currentRoomIds.has(roomId)) {
           unsub();
           chatListenersRef.current.delete(roomId);
         }
       });
-    });
+    }, 10000);
 
     return () => {
+      clearInterval(cleanupInterval);
       unsubscribeChatList();
+      unsubscribeGroupList();
       chatListenersRef.current.forEach(unsub => unsub());
       chatListenersRef.current.clear();
     };
-  }, [user?.id]);
+  }, [user?.id, appLaunchTime]);
 
   // Missed Call Listener
   useEffect(() => {
     if (!user) return;
     const callHistoryRef = ref(db, `user_call_history/${user.id}`);
-    const q = query(callHistoryRef, limitToLast(1)); // Listen for newest call log
+    const q = query(callHistoryRef, limitToLast(1));
 
     const unsubscribe = onValue(q, (snapshot) => {
       if (snapshot.exists()) {
@@ -699,37 +667,20 @@ function App() {
         const logId = Object.keys(data)[0];
         const log = data[logId];
 
-        // If it's a new missed call (timestamp > launch check)
-        // Ideally we track "lastViewedCalls" but for now let's just create a runtime counter
-        // that increments on real-time updates.
         if (log.type === 'missed' && log.timestamp > appLaunchTime) {
-          // Check if we haven't already counted this log ID
           if (!notifiedMessagesRef.current.has(logId)) {
             notifiedMessagesRef.current.add(logId);
-
-            // Add to unique missed call users if not already there
             if (log.userId && log.userId !== user.id) {
               setMissedCallUsers(prev => prev.includes(log.userId) ? prev : [...prev, log.userId]);
             }
-
-            // Trigger In-App Popup for Missed Call
-            const callerUser = {
-              id: log.userId,
-              name: 'Caller', // We might not have the name handy here without fetching
-              displayName: 'Caller',
-              avatarUrl: null
-            };
-
             setNotificationPopup({
               title: 'Missed Call',
               body: 'You missed a call',
               id: logId,
               roomId: null,
-              user: callerUser,
+              user: { id: log.userId, name: 'Caller', displayName: 'Caller', avatarUrl: null },
               type: 'missed_call'
             });
-
-            // Trigger Local Notification for Missed Call
             sendLocalNotification('Missed Call', 'You have a missed voice call', logId);
           }
         }
@@ -738,13 +689,25 @@ function App() {
     return () => unsubscribe();
   }, [user, appLaunchTime]);
 
-  // Calculate total unread messages (user count instead of message count)
   const totalUnread = Object.keys(unreadCounts).length;
 
-  const toggleSidebar = () => setShowSidebar(!showSidebar);
-
   const initiateCall = async () => {
-    if (!activeChat || !activeChat.peerId) {
+    if (!activeChat) return;
+
+    if (activeChat.type === 'group') {
+      setIsVoiceActive(true);
+      // Log starting the room
+      const chatRef = ref(db, `messages/${activeChat.id}`);
+      push(chatRef, {
+        text: `${user.displayName || user.name} started a group voice call`,
+        type: 'system',
+        timestamp: Date.now(),
+        userId: 'system'
+      });
+      return;
+    }
+
+    if (!activeChat.peerId) {
       alert("Cannot call without a recipient.");
       return;
     }
@@ -759,20 +722,12 @@ function App() {
     };
     const callRef = ref(db, `calls/${recipientId}`);
     try {
-      const setPromise = set(callRef, callData);
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Call Initiation Timeout')), 3000));
-      await Promise.race([setPromise, timeoutPromise]);
+      await set(callRef, callData);
     } catch (err) {
-      try {
-        const response = await fetch(`https://crispconnect-default-rtdb.firebaseio.com/calls/${recipientId}.json`, {
-          method: 'PUT',
-          body: JSON.stringify(callData)
-        });
-        if (!response.ok) throw new Error('REST call initiation failed');
-      } catch (restErr) {
-        alert('Failed to initiate call. Connection error.');
-        return;
-      }
+      await fetch(`https://crispconnect-default-rtdb.firebaseio.com/calls/${recipientId}.json`, {
+        method: 'PUT',
+        body: JSON.stringify(callData)
+      });
     }
     setOutgoingCall({ recipientId, status: 'ringing', startTime: Date.now() });
     ringbackRef.current = new Audio(RINGBACK_URL);
@@ -798,8 +753,6 @@ function App() {
 
   const cancelOutgoingCall = () => {
     if (outgoingCall) {
-      setOutgoingCall(null); // Reset outgoing call state
-      setIsOutgoingMinimized(false); // Reset minimization state
       const callRef = ref(db, `calls/${outgoingCall.recipientId}`);
       remove(callRef);
       clearTimeout(callTimeoutRef.current);
@@ -808,41 +761,13 @@ function App() {
         ringbackRef.current = null;
       }
       setOutgoingCall(null);
+      setIsOutgoingMinimized(false);
       logCallToHistory(outgoingCall.recipientId, 'outgoing', 0);
     }
-  };
-
-  const handleCallAccepted = (refToCleanup) => {
-    clearTimeout(callTimeoutRef.current);
-    if (ringbackRef.current) {
-      ringbackRef.current.pause();
-      ringbackRef.current = null;
-    }
-    setOutgoingCall(null);
-    setIsOutgoingMinimized(false);
-    setIsVoiceActive(true);
-    setActiveCallType('outgoing');
-    remove(refToCleanup);
-  };
-
-  const handleCallDeclined = (refToCleanup) => {
-    clearTimeout(callTimeoutRef.current);
-    if (ringbackRef.current) {
-      ringbackRef.current.pause();
-      ringbackRef.current = null;
-    }
-    setOutgoingCall(prev => prev ? { ...prev, status: 'declined' } : null);
-    setIsOutgoingMinimized(false);
-    if (outgoingCall) {
-      logCallToHistory(outgoingCall.recipientId, 'outgoing', 0);
-    }
-    setTimeout(() => setOutgoingCall(null), 3000);
-    remove(refToCleanup);
   };
 
   const logCallEnd = (roomId, duration) => {
     if (!duration || duration <= 0) return;
-
     const chatRef = ref(db, `messages/${roomId}`);
     push(chatRef, {
       userId: 'system',
@@ -852,8 +777,6 @@ function App() {
       timestamp: serverTimestamp(),
       type: 'call_log'
     });
-
-    // Also log to user's call history
     if (activeChat?.peerId) {
       logCallToHistory(activeChat.peerId, activeCallType, duration);
     }
@@ -864,9 +787,9 @@ function App() {
     const historyRef = ref(db, `user_call_history/${user.id}`);
     const newLogRef = push(historyRef);
     set(newLogRef, {
-      userId: otherUserId, // Keep both for safety
-      oderId: otherUserId, // UserSearch.jsx expects this
-      type, // 'incoming', 'outgoing', 'missed'
+      userId: otherUserId,
+      oderId: otherUserId,
+      type,
       timestamp: Date.now(),
       duration: duration || 0
     });
@@ -874,7 +797,7 @@ function App() {
 
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const secs = Math.floor(seconds % 60);
     return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   };
 
@@ -885,13 +808,22 @@ function App() {
       if (snapshot.exists()) {
         const data = snapshot.val();
         if (data.status === 'accepted') {
-          handleCallAccepted(callRef);
+          clearTimeout(callTimeoutRef.current);
+          if (ringbackRef.current) { ringbackRef.current.pause(); ringbackRef.current = null; }
+          setOutgoingCall(null);
+          setIsVoiceActive(true);
+          setActiveCallType('outgoing');
+          remove(callRef);
         } else if (data.status === 'declined') {
-          handleCallDeclined(callRef);
+          clearTimeout(callTimeoutRef.current);
+          if (ringbackRef.current) { ringbackRef.current.pause(); ringbackRef.current = null; }
+          setOutgoingCall(prev => prev ? { ...prev, status: 'declined' } : null);
+          if (outgoingCall) logCallToHistory(outgoingCall.recipientId, 'outgoing', 0);
+          setTimeout(() => setOutgoingCall(null), 3000);
+          remove(callRef);
         }
       }
     });
-
     return () => unsubscribe();
   }, [outgoingCall]);
 
@@ -899,9 +831,7 @@ function App() {
     setActiveChat({ id: callData.roomId, name: callData.callerName, peerId: callData.callerId });
     setIsVoiceActive(true);
     setActiveCallType('incoming');
-    if (user) {
-      remove(ref(db, `calls/${user.id}`));
-    }
+    if (user) remove(ref(db, `calls/${user.id}`));
   };
 
   if (!user) {
@@ -910,7 +840,6 @@ function App() {
 
   return (
     <div className={`h-[100dvh] w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
-      {/* Hidden SVG Definitions for Retro Icons */}
       <svg width="0" height="0" className="absolute invisible pointer-events-none">
         <defs>
           <linearGradient id="retro-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -919,9 +848,9 @@ function App() {
             <stop offset="100%" stopColor="#f97316" />
           </linearGradient>
           <linearGradient id="retro-gradient-orange" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#f59e0b" />
-            <stop offset="50%" stopColor="#f43f5e" />
-            <stop offset="100%" stopColor="#8b5cf6" />
+            <stop offset="0%" stopColor="#f97316" />
+            <stop offset="50%" stopColor="#facc15" />
+            <stop offset="100%" stopColor="#ef4444" />
           </linearGradient>
         </defs>
       </svg>
@@ -931,16 +860,8 @@ function App() {
       <IncomingCall
         currentUser={user}
         onAccept={handleAcceptCall}
-        onDecline={(callData) => {
-          if (callData && callData.callerId) {
-            logCallToHistory(callData.callerId, 'missed');
-          }
-        }}
-        onMissed={(callData) => {
-          if (callData && callData.callerId) {
-            logCallToHistory(callData.callerId, 'missed');
-          }
-        }}
+        onDecline={(callData) => callData && callData.callerId && logCallToHistory(callData.callerId, 'missed')}
+        onMissed={(callData) => callData && callData.callerId && logCallToHistory(callData.callerId, 'missed')}
         ringtone={phoneRingtone}
       />
 
@@ -961,30 +882,15 @@ function App() {
       {outgoingCall && !isOutgoingMinimized && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="bg-[#111b21] rounded-3xl p-8 w-[320px] shadow-2xl border border-[#323b42] flex flex-col items-center text-center relative overflow-hidden">
-            <button
-              onClick={() => setIsOutgoingMinimized(true)}
-              className="absolute top-4 right-4 p-2 text-[#8696a0] hover:text-white transition-colors"
-              title="Minimize"
-            >
-              <Minimize2 className="w-5 h-5" />
-            </button>
-
-            <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-[#00a884] to-[#02d98b] flex items-center justify-center text-white text-4xl font-bold mb-6 shadow-lg animate-pulse overflow-hidden">
-              {isValidAvatarUrl(activeChat.avatarUrl) ? (
-                <img src={activeChat.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-              ) : (
-                activeChat?.name?.[0]?.toUpperCase() || '?'
-              )}
+            <button onClick={() => setIsOutgoingMinimized(true)} className="absolute top-4 right-4 p-2 text-[#8696a0] hover:text-white"><Minimize2 size={20} /></button>
+            <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-[#00a884] to-[#02d98b] flex items-center justify-center text-white text-4xl mb-6 shadow-lg animate-pulse overflow-hidden">
+              {isValidAvatarUrl(activeChat?.avatarUrl) ? <img src={activeChat.avatarUrl} className="w-full h-full object-cover" /> : activeChat?.name?.[0]?.toUpperCase()}
             </div>
-            <h2 className="text-xl font-semibold text-[#e9edef] mb-1">{activeChat?.name || 'Unknown'}</h2>
-            <p className="text-sm text-[#8696a0] mb-8">
-              {outgoingCall.status === 'ringing' && 'Calling...'}
-              {outgoingCall.status === 'no_answer' && 'No answer'}
-              {outgoingCall.status === 'declined' && 'Call declined'}
-            </p>
+            <h2 className="text-xl font-semibold text-[#e9edef] mb-1">{activeChat?.name}</h2>
+            <p className="text-sm text-[#8696a0] mb-8">{outgoingCall.status === 'ringing' ? 'Calling...' : outgoingCall.status}</p>
             {outgoingCall.status === 'ringing' && (
-              <button onClick={cancelOutgoingCall} className="w-16 h-16 mx-auto rounded-full bg-rose-500 text-white flex items-center justify-center transition-transform hover:scale-110 active:scale-95 shadow-xl">
-                <PhoneOff className="w-7 h-7" />
+              <button onClick={cancelOutgoingCall} className="w-16 h-16 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-xl hover:scale-110 transition-transform">
+                <PhoneOff size={28} />
               </button>
             )}
           </div>
@@ -992,131 +898,69 @@ function App() {
       )}
 
       {outgoingCall && isOutgoingMinimized && (
-        <div className="fixed top-4 right-4 z-[300] animate-bounce-subtle">
-          <div
-            onClick={() => setIsOutgoingMinimized(false)}
-            className="bg-[#00a884] text-white px-4 py-3 rounded-2xl shadow-2xl border border-white/20 flex items-center gap-3 cursor-pointer hover:scale-105 transition-transform"
-          >
-            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold overflow-hidden shrink-0">
-              {isValidAvatarUrl(activeChat.avatarUrl) ? (
-                <img src={activeChat.avatarUrl} alt="DP" className="w-full h-full object-cover" />
-              ) : (
-                activeChat?.name?.[0]?.toUpperCase() || '?'
-              )}
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xs font-bold whitespace-nowrap">Calling {activeChat?.name}</span>
-              <span className="text-[10px] opacity-80 text-left">Click to expand</span>
-            </div>
-            <Maximize2 className="w-4 h-4 ml-2" />
+        <div className="fixed top-4 right-4 z-[300] bg-[#00a884] text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 cursor-pointer" onClick={() => setIsOutgoingMinimized(false)}>
+          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold overflow-hidden shrink-0">
+            {isValidAvatarUrl(activeChat?.avatarUrl) ? <img src={activeChat.avatarUrl} className="w-full h-full object-cover" /> : activeChat?.name?.[0]?.toUpperCase()}
           </div>
+          <span className="text-xs font-bold">Calling {activeChat?.name}</span>
+          <Maximize2 size={16} />
         </div>
       )}
 
       <div className="flex-1 z-10 flex h-full justify-center md:py-5 md:px-5 lg:px-14">
-        <div className="w-full h-full max-w-[1600px] bg-transparent flex flex-col md:flex-row shadow-2xl overflow-hidden rounded-none md:rounded-xl border-none md:border border-[#323b42]">
-
-          {/* LEFT PANEL */}
+        <div className="w-full h-full max-w-[1600px] flex flex-col md:flex-row shadow-2xl overflow-hidden rounded-none md:rounded-xl md:border border-[#323b42]">
           <div className={`flex flex-col border-r border-[#323b42] h-full w-full md:w-[35%] lg:w-[30%] min-w-[300px] ${activeChat ? 'hidden md:flex' : 'flex'} ${theme === 'light' ? 'bg-white' : 'bg-[#111b21]'}`}>
             <div className="wa-header justify-between shrink-0">
               <div className="flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-full bg-slate-600 overflow-hidden cursor-pointer hover:ring-2 hover:ring-[var(--wa-teal)]/30 transition-all shrink-0"
-                  onClick={() => setPreviewUser(user)}
-                >
-                  {isValidAvatarUrl(user.avatarUrl) ? (
-                    <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full bg-slate-500 flex items-center justify-center text-white font-bold">
-                      {(user.displayName || user.name)[0].toUpperCase()}
-                    </div>
-                  )}
+                <div className="w-10 h-10 rounded-full bg-slate-600 overflow-hidden cursor-pointer" onClick={() => setPreviewUser(user)}>
+                  {isValidAvatarUrl(user.avatarUrl) ? <img src={user.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-slate-500 flex items-center justify-center text-white">{(user.displayName || user.name)[0].toUpperCase()}</div>}
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <span className="font-medium text-sm text-[var(--wa-text)] leading-tight truncate">{user.displayName || user.name}</span>
+                  <span className="font-medium text-sm text-[var(--wa-text)] truncate">{user.displayName || user.name}</span>
                   <span className="text-[10px] text-[var(--wa-text-muted)] truncate">@{user.name}</span>
                 </div>
               </div>
               <div className="flex gap-1 text-[var(--wa-text-muted)]">
-                <button
-                  className={`p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors relative ${searchViewMode === 'directory' ? 'text-[var(--wa-teal)]' : ''}`}
-                  onClick={() => {
-                    setSearchViewMode('directory');
-                    // Note: We don't clear individual unread counts here as they are cleared when opening the specific chat.
-                    // But the user might want to see the list.
-                  }}
-                  title="New Chat"
-                >
-                  <MessageCircle className="w-5 h-5" />
-                  {totalUnread > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-[#00a884] text-[#111b21] text-[10px] font-bold px-1.5 h-4 min-w-[16px] flex items-center justify-center rounded-full shadow-sm ring-2 ring-[var(--wa-panel)]">
-                      {totalUnread > 99 ? '99+' : totalUnread}
-                    </span>
-                  )}
+                <button className={`p-2 hover:bg-[var(--wa-border)] rounded-full relative ${searchViewMode === 'directory' ? 'text-[var(--wa-teal)]' : ''}`} onClick={() => setSearchViewMode('directory')} title="New Chat">
+                  <MessageCircle size={20} />
+                  {totalUnread > 0 && <span className="absolute -top-1 -right-1 bg-[#00a884] text-[#111b21] text-[10px] font-bold px-1.5 h-4 min-w-[16px] flex items-center justify-center rounded-full ring-2 ring-[var(--wa-panel)]">{totalUnread}</span>}
                 </button>
-                <button
-                  className={`p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors relative ${searchViewMode === 'call' ? 'text-[var(--wa-teal)]' : ''}`}
-                  onClick={() => {
-                    setSearchViewMode('call');
-                    setMissedCallUsers([]); // Clear missed call users when viewing call tab
-                  }}
-                  title="Call"
-                >
-                  <Phone className="retro-iridescent" />
-                  {missedCallUsers.length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 h-4 min-w-[16px] flex items-center justify-center rounded-full shadow-sm ring-2 ring-[var(--wa-panel)]">
-                      {missedCallUsers.length > 99 ? '99+' : missedCallUsers.length}
-                    </span>
-                  )}
+                <button className={`p-2 hover:bg-[var(--wa-border)] rounded-full relative ${searchViewMode === 'call' ? 'text-[var(--wa-teal)]' : ''}`} onClick={() => { setSearchViewMode('call'); setMissedCallUsers([]); }} title="Call">
+                  <Phone size={20} />
+                  {missedCallUsers.length > 0 && <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 h-4 min-w-[16px] flex items-center justify-center rounded-full ring-2 ring-[var(--wa-panel)]">{missedCallUsers.length}</span>}
                 </button>
-                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors group/btn" onClick={() => setShowSettings(true)} title="Settings"><SettingsIcon className="retro-iridescent" /></button>
-                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full transition-colors group/btn" onClick={handleLogout} title="Logout"><LogOut className="retro-iridescent" /></button>
+                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full" onClick={() => setShowSettings(true)}><SettingsIcon size={20} /></button>
+                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full" onClick={handleLogout}><LogOut size={20} /></button>
               </div>
             </div>
 
             <UserSearch
               currentUser={user}
               onStartChat={startDirectChat}
-              onStartCall={(otherUser) => {
-                // Start call after chat is opened - initiateCall is already defined in this scope
-                if (otherUser) {
-                  initiateCall();
-                }
-              }}
+              onStartCall={initiateCall}
               viewMode={searchViewMode}
               unreadCounts={unreadCounts}
               setViewMode={setSearchViewMode}
             />
 
-            {/* Theme Switcher */}
-            <div className="wa-input-area mt-auto border-t border-[var(--wa-border)] p-2 bg-[var(--wa-bg)] shrink-0 relative z-10">
-              <div className="w-full grid grid-cols-[1fr_40px_1fr] gap-2 items-center bg-[var(--wa-panel)] rounded-full p-1 border border-[var(--wa-border)] group hover:border-[#00a884]/50 hover:shadow-lg hover:shadow-[#00a884]/10 transition-all duration-300 transform hover:scale-[1.02]">
-                <button
-                  onClick={toggleTheme}
-                  className={`flex items-center justify-center gap-2 py-3 sm:py-4 px-2 sm:px-4 rounded-full text-[12px] sm:text-[14px] font-bold transition-all duration-300 relative overflow-hidden ${theme === 'light' ? 'bg-[#00a884] text-white shadow-[0_0_15px_rgba(0,168,132,0.5)] scale-105' : 'text-[var(--wa-text-muted)] hover:text-[var(--wa-text)]'}`}
-                >
-                  {theme === 'light' && <div className="animate-liquid"></div>}
-                  <Sun className={`w-5 sm:w-6 h-5 sm:h-6 transition-transform duration-500 relative z-10 ${theme === 'light' ? 'animate-sun' : 'group-hover:rotate-180 group-hover:text-amber-500'}`} />
-                  <span className="relative z-10">Light</span>
+            <div className="wa-input-area mt-auto border-t border-[var(--wa-border)] p-2 bg-[var(--wa-bg)] shrink-0">
+              <div className="w-full grid grid-cols-[1fr_40px_1fr] gap-2 items-center bg-[var(--wa-panel)] rounded-full p-1 border border-[var(--wa-border)]">
+                <button onClick={toggleTheme} className={`flex items-center justify-center gap-2 py-3 rounded-full text-xs font-bold transition-all ${theme === 'light' ? 'bg-[#00a884] text-white shadow-lg' : 'text-[var(--wa-text-muted)]'}`}>
+                  <Sun size={20} /> Light
                 </button>
-                <span className="px-1 text-[10px] sm:text-[11px] uppercase tracking-widest text-[var(--wa-text-muted)] font-black pointer-events-none transition-all duration-300 group-hover:tracking-[0.3em] group-hover:text-[#00a884] whitespace-nowrap z-10 text-center block">Mode</span>
-                <button
-                  onClick={toggleTheme}
-                  className={`flex items-center justify-center gap-2 py-3 sm:py-4 px-2 sm:px-4 rounded-full text-[12px] sm:text-[14px] font-bold transition-all duration-300 relative overflow-hidden ${theme === 'dark' ? 'bg-[#00a884] text-white shadow-[0_0_15px_rgba(0,168,132,0.5)] scale-105' : 'text-[var(--wa-text-muted)] hover:text-[var(--wa-text)]'}`}
-                >
-                  {theme === 'dark' && <div className="animate-liquid"></div>}
-                  <span className="relative z-10">Dark</span>
-                  <Moon className={`w-5 sm:w-6 h-5 sm:h-6 transition-transform duration-500 relative z-10 ${theme === 'dark' ? 'animate-moon' : 'group-hover:-rotate-12 group-hover:text-blue-400'}`} />
+                <span className="text-[10px] uppercase text-center text-[var(--wa-text-muted)] font-black">Mode</span>
+                <button onClick={toggleTheme} className={`flex items-center justify-center gap-2 py-3 rounded-full text-xs font-bold transition-all ${theme === 'dark' ? 'bg-[#00a884] text-white shadow-lg' : 'text-[var(--wa-text-muted)]'}`}>
+                  Dark <Moon size={20} />
                 </button>
               </div>
             </div>
           </div>
 
-          {/* RIGHT PANEL */}
           <div className={`flex-1 flex flex-col bg-[var(--wa-chat-bg)] h-full relative min-w-0 ${activeChat ? 'flex' : 'hidden md:flex'}`}>
             {activeChat ? (
               <>
                 <Chat
+                  key={activeChat.id}
                   user={user}
                   roomId={activeChat.id}
                   onBack={() => { setActiveChat(null); setIsVoiceActive(false); }}
@@ -1127,32 +971,26 @@ function App() {
                   chatBackground={chatBackground}
                   unreadCount={currentChatUnreadCount}
                   initialMessageId={activeChat.initialMessageId}
+                  chatType={activeChat.type}
+                  recipients={activeChat.recipients}
                 />
                 {isVoiceActive && (
                   <VoiceCall
                     user={user}
                     roomId={activeChat.id}
                     autoJoin={true}
-                    onEnd={(duration) => {
-                      logCallEnd(activeChat.id, duration);
-                      setIsVoiceActive(false);
-                    }}
+                    onEnd={(duration) => { logCallEnd(activeChat.id, duration); setIsVoiceActive(false); }}
                   />
                 )}
               </>
             ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center bg-[var(--wa-chat-bg)] relative overflow-hidden">
-                <div className="wa-chat-bg absolute inset-0 opacity-[0.06]"></div>
-                <div className="max-w-[560px] text-center flex flex-col items-center relative z-10 animate-fade-in-up">
-                  <div className="w-64 flex items-center justify-center relative -mb-4">
-                    <img src="/logo.png" alt="Nexurao" className="w-full h-auto object-contain drop-shadow-[0_0_30px_rgba(0,168,132,0.3)] animate-pulse-slow" />
-                  </div>
-                  <div className="flex flex-col items-center gap-2">
-                    <h1 className="text-3xl font-light text-[var(--wa-text)]">Nexurao for Web</h1>
-                    <p className="text-sm text-[var(--wa-text-muted)]">Send and receive messages without keeping your phone online.</p>
-                  </div>
+              <div className="w-full h-full flex flex-col items-center justify-center relative">
+                <div className="max-w-[560px] text-center flex flex-col items-center z-10">
+                  <img src="/logo.png" className="w-64 h-auto mb-4" />
+                  <h1 className="text-3xl font-light text-[var(--wa-text)]">Nexurao for Web</h1>
+                  <p className="text-sm text-[var(--wa-text-muted)]">Send and receive messages without keeping your phone online.</p>
                   <div className="text-xs flex items-center justify-center gap-2 mt-8 opacity-60">
-                    <Lock className="w-3 h-3" /> End-to-end encrypted
+                    <Lock size={12} /> End-to-end encrypted
                   </div>
                 </div>
                 <div className="absolute bottom-0 w-full h-2 bg-[#00a884]"></div>
@@ -1162,72 +1000,55 @@ function App() {
         </div>
       </div>
 
-      {showSettings && (
-        <Settings
-          user={user}
-          onUpdateUser={(updated) => {
-            setUser(updated);
-            localStorage.setItem('nexurao_user', JSON.stringify(updated));
-          }}
-          onClose={() => setShowSettings(false)}
-          currentBackground={chatBackground}
-          onBackgroundChange={(bg) => {
-            setChatBackground(bg);
-            localStorage.setItem('nexurao_chat_background', JSON.stringify(bg));
-          }}
-        />
+      {notificationPopup && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[500] bg-[#1c2c33] text-white px-6 py-4 rounded-2xl shadow-2xl border border-white/10 flex items-center gap-4 animate-in slide-in-from-top cursor-pointer hover:bg-[#203038] transition-colors" onClick={() => {
+          if (notificationPopup.roomId) {
+            startDirectChat({ id: notificationPopup.roomId, name: notificationPopup.title, type: notificationPopup.roomId.startsWith('group_') ? 'group' : 'user' });
+          }
+          setNotificationPopup(null);
+        }}>
+          <div className="w-12 h-12 rounded-full overflow-hidden shrink-0">
+            {isValidAvatarUrl(notificationPopup.user?.avatarUrl) ? <img src={notificationPopup.user.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-slate-600 flex items-center justify-center text-lg font-bold">{notificationPopup.title[0]}</div>}
+          </div>
+          <div>
+            <h4 className="font-bold text-sm">{notificationPopup.title}</h4>
+            <p className="text-xs text-white/70 line-clamp-1">{notificationPopup.body}</p>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); setNotificationPopup(null); }} className="ml-4 p-1 hover:bg-white/10 rounded-full"><X size={16} /></button>
+        </div>
       )}
 
-      {/* Logout Confirmation Modal */}
       {showLogoutConfirm && (
         <div className="fixed inset-0 z-[400] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setShowLogoutConfirm(false)} />
-          <div className="relative bg-slate-900 border border-white/10 rounded-2xl w-full max-w-[320px] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
-            <div className="p-6 text-center">
-              <div className="w-16 h-16 bg-rose-500/10 border border-rose-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <LogOut className="w-8 h-8 text-rose-500" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Logout?</h3>
-              <p className="text-slate-400 text-sm mb-6">Are you sure you want to end your session?</p>
-
-              <div className="flex flex-col gap-3">
-                <button
-                  onClick={handleLogout}
-                  className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-rose-500/20"
-                >
-                  Confirm Logout
-                </button>
-                <button
-                  onClick={() => setShowLogoutConfirm(false)}
-                  className="w-full py-3 bg-white/5 hover:bg-white/10 text-white font-medium rounded-xl transition-all"
-                >
-                  Cancel
-                </button>
-              </div>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowLogoutConfirm(false)} />
+          <div className="relative bg-slate-900 border border-white/10 rounded-2xl w-full max-w-[320px] p-6 text-center">
+            <h3 className="text-xl font-bold text-white mb-2">Logout?</h3>
+            <p className="text-slate-400 text-sm mb-6">Are you sure you want to end your session?</p>
+            <div className="flex flex-col gap-3">
+              <button onClick={handleLogout} className="w-full py-3 bg-rose-600 text-white font-bold rounded-xl shadow-lg">Confirm Logout</button>
+              <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-3 bg-white/5 text-white font-medium rounded-xl">Cancel</button>
             </div>
           </div>
         </div>
       )}
 
       {previewUser && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setPreviewUser(null)}>
-          <div className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setPreviewUser(null)}>
+          <div className="bg-[#2a3942] rounded-lg shadow-2xl overflow-hidden max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
             <div className="relative aspect-square w-full bg-[#111b21]">
-              {isValidAvatarUrl(previewUser.avatarUrl) ? <img src={previewUser.avatarUrl} alt={previewUser.displayName || previewUser.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-8xl text-white font-bold bg-slate-700">{(previewUser.displayName || previewUser.name)?.[0]?.toUpperCase()}</div>}
-              <button onClick={() => setPreviewUser(null)} className="absolute top-4 right-4 text-white/50 hover:text-white transition-colors"><X size={24} /></button>
+              {isValidAvatarUrl(previewUser.avatarUrl) ? <img src={previewUser.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-8xl text-white font-bold bg-slate-700">{(previewUser.displayName || previewUser.name)?.[0]?.toUpperCase()}</div>}
+              <button onClick={() => setPreviewUser(null)} className="absolute top-4 right-4 text-white/50 hover:text-white"><X size={24} /></button>
               <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
                 <h2 className="text-white text-lg font-medium">{previewUser.displayName || previewUser.name}</h2>
-                <p className="text-white/50 text-xs mb-1">@{previewUser.name}</p>
+                <p className="text-white/50 text-xs">@{previewUser.name}</p>
                 <p className="text-white/70 text-sm mt-1">{previewUser.about || 'Hey there! I am using Nexurao.'}</p>
               </div>
             </div>
           </div>
         </div>
-      )
-      }
-    </div >
+      )}
+    </div>
   );
 }
 
 export default App;
-

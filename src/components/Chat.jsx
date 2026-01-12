@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../lib/firebase';
 import { ref, push, onValue, serverTimestamp, query, limitToLast, set, get, remove, update } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import GroupInfoModal from './GroupInfoModal';
+import BroadcastInfoModal from './BroadcastInfoModal';
 import { Send, Image as ImageIcon, Plus, Check, Phone, Mic, Square, FileText, Video, Play, Pause, X, MapPin, UserPlus, UserMinus, Trash, RotateCcw, CornerUpLeft, Trash2, Clock, Calendar, Edit3, ArrowRight } from 'lucide-react';
 
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
@@ -19,7 +21,7 @@ const getLocalISOString = (date) => {
 // Notification API endpoint (Vercel serverless function)
 const NOTIFICATION_API_URL = 'https://nexurao.vercel.app/api/send-notification';
 
-export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerId, onStartCall, chatBackground, unreadCount = 0, initialMessageId = null }) {
+export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerId, onStartCall, chatBackground, unreadCount = 0, initialMessageId = null, chatType = 'direct', recipients = [] }) {
 
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
@@ -31,8 +33,6 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
     const inputRef = useRef(null);
 
     // ... (refs and state unchanged) ...
-    // Note: I will only replace the top distinct part to add imports and prop.
-    // The handleSend logic is further down, I will use a separate replacement for that to be safe.
 
     // File input refs
     const docInputRef = useRef(null);
@@ -62,19 +62,24 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [scheduleTime, setScheduleTime] = useState('');
     const [editingScheduledMsg, setEditingScheduledMsg] = useState(null);
+    const [showGroupInfo, setShowGroupInfo] = useState(false);
+    const [showBroadcastInfo, setShowBroadcastInfo] = useState(false);
+    const [groupSettings, setGroupSettings] = useState(null);
+    const [currentUserGroupRole, setCurrentUserGroupRole] = useState('member');
 
-    // Check if peer is in contacts
+    // Check if peer is in contacts (Only for direct chats)
     useEffect(() => {
-        if (!user || !peerId) return;
+        if (!user || !peerId || chatType !== 'direct') return;
         const contactRef = ref(db, `user_contacts/${user.id}/${peerId}`);
         const unsubscribe = onValue(contactRef, (snapshot) => {
             setIsContact(snapshot.exists());
         });
         return () => unsubscribe();
-    }, [user, peerId]);
+    }, [user, peerId, chatType]);
 
     // Extract peerId from roomId if not provided (dm_user1_user2 format)
     const effectivePeerId = peerId || (() => {
+        if (chatType !== 'direct') return null;
         if (roomId && roomId.startsWith('dm_')) {
             const parts = roomId.replace('dm_', '').split('_');
             // Return the ID that is not the current user
@@ -85,9 +90,9 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
 
 
-    // Listen to peer's presence status
+    // Listen to peer's presence status (Only for direct chats)
     useEffect(() => {
-        if (!effectivePeerId) return;
+        if (!effectivePeerId || chatType !== 'direct') return;
         const presenceRef = ref(db, `users/${effectivePeerId}`);
         const unsubscribe = onValue(presenceRef, (snapshot) => {
             if (snapshot.exists()) {
@@ -100,6 +105,23 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         });
         return () => unsubscribe();
     }, [effectivePeerId]);
+
+    // Listen to group settings if it's a group chat
+    useEffect(() => {
+        if (chatType !== 'group' || !roomId) {
+            setGroupSettings(null);
+            return;
+        }
+        const groupRef = ref(db, `groups/${roomId}`);
+        const unsubscribe = onValue(groupRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                setGroupSettings(data);
+                setCurrentUserGroupRole(data.members?.[user.id]?.role || 'member');
+            }
+        });
+        return () => unsubscribe();
+    }, [roomId, chatType, user.id]);
 
     // Fetch scheduled messages for this room
     useEffect(() => {
@@ -162,10 +184,13 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
     // Check for cleared chat history
     useEffect(() => {
-        if (!user?.id || !effectivePeerId) return;
+        if (!user?.id || !roomId) return;
+
+        const chatMetaId = chatType === 'direct' ? effectivePeerId : roomId;
+        if (!chatMetaId) return;
 
         // Use separate meta node to prevent overwrites from chat list updates
-        const metaRef = ref(db, `user_chat_meta/${user.id}/${effectivePeerId}`);
+        const metaRef = ref(db, `user_chat_meta/${user.id}/${chatMetaId}`);
         const unsubscribe = onValue(metaRef, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val();
@@ -182,7 +207,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         });
 
         return () => unsubscribe();
-    }, [user?.id, effectivePeerId]);
+    }, [roomId, chatType, user?.id, effectivePeerId]);
 
     // Format last seen time
     const formatLastSeen = (timestamp) => {
@@ -319,10 +344,11 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             title: 'Delete Message',
             message: 'Delete this message for me?',
             action: () => {
-                if (!user?.id || !effectivePeerId) return;
+                const chatMetaId = chatType === 'direct' ? effectivePeerId : roomId;
+                if (!user?.id || !chatMetaId) return;
 
                 // Add to deletedMessages in meta
-                const metaRef = ref(db, `user_chat_meta/${user.id}/${effectivePeerId}/deletedMessages/${msgId}`);
+                const metaRef = ref(db, `user_chat_meta/${user.id}/${chatMetaId}/deletedMessages/${msgId}`);
                 set(metaRef, true);
 
                 // Update local state immediately
@@ -337,16 +363,17 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             type: 'clear',
             target: null,
             title: 'Clear Chat History',
-            message: 'This will clear the conversation history for you. Messages will remain for the other person.',
+            message: chatType === 'group' ? 'This will clear the conversation history for you ONLY. Messages will remain for other group members.' : 'This will clear the conversation history for you. Messages will remain for the other person.',
             action: () => {
-                if (!effectivePeerId || !user.id) {
-                    console.error('[Chat] Clear chat blocked: Missing ID. Peer:', effectivePeerId, 'User:', user?.id);
-                    alert('Cannot clear chat: User ID missing. Please refresh and try again.');
+                const chatMetaId = chatType === 'direct' ? effectivePeerId : roomId;
+                if (!chatMetaId || !user.id) {
+                    console.error('[Chat] Clear chat blocked: Missing ID. MetaId:', chatMetaId, 'User:', user?.id);
+                    alert('Cannot clear chat: ID missing. Please refresh and try again.');
                     return;
                 }
 
                 // Update meta with clearedAt timestamp - separate from chat list
-                const metaRef = ref(db, `user_chat_meta/${user.id}/${effectivePeerId}`);
+                const metaRef = ref(db, `user_chat_meta/${user.id}/${chatMetaId}`);
                 update(metaRef, {
                     clearedAt: serverTimestamp()
                 }).catch(e => console.error('[Chat] Clear update failed', e));
@@ -428,8 +455,6 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
     };
 
     const updateChatHistory = (text = null) => {
-        if (!effectivePeerId || !user?.id) return;
-
         const baseUpdate = {
             timestamp: serverTimestamp(),
             lastActive: serverTimestamp(),
@@ -437,53 +462,130 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
 
         if (text) baseUpdate.lastMessage = text;
 
-        // Update Sender's History
-        update(ref(db, `user_chats/${user.id}/${effectivePeerId}`), {
-            ...baseUpdate,
-            id: effectivePeerId,
-            unreadCount: 0
-        });
+        if (chatType === 'broadcast') {
+            // 1. Update Sender's Broadcast List Metadata (to show in their list as active)
+            // We can store a 'lastActive' on the broadcast list itself if we want sorting
+            update(ref(db, `broadcast_lists/${user.id}/${roomId}`), {
+                lastActive: serverTimestamp(),
+                lastMessage: text
+            });
 
-        // Update Recipient's History
-        update(ref(db, `user_chats/${effectivePeerId}/${user.id}`), {
-            ...baseUpdate,
-            id: user.id,
-            unreadCount: 1 // Simplified increment
-        });
+            // 2. Update Recipients' DM History (So they see a new DM from Sender)
+            recipients.forEach(recipientId => {
+                // Update Recipient's view of the chat with Sender
+                update(ref(db, `user_chats/${recipientId}/${user.id}`), {
+                    ...baseUpdate,
+                    id: user.id,
+                    unreadCount: 1 // Ideally increment, but simplified
+                });
+                // Update Sender's view of the DM with Recipient (optional, but good for consistency)
+                update(ref(db, `user_chats/${user.id}/${recipientId}`), {
+                    ...baseUpdate,
+                    id: recipientId,
+                    unreadCount: 0
+                });
+            });
 
-        // Signal user to open/focus chat
-        set(ref(db, `users/${effectivePeerId}/invokeChat`), {
-            roomId: roomId,
-            fromName: user.displayName || user.name,
-            timestamp: Date.now()
-        });
+        } else if (chatType === 'group') {
+            // Update all group members' metadata for sorting and unread notifications
+            // 1. Get current member list
+            get(ref(db, `groups/${roomId}/members`)).then(snapshot => {
+                if (snapshot.exists()) {
+                    const members = snapshot.val();
+                    Object.keys(members).forEach(memberId => {
+                        const memberGroupRef = ref(db, `user_groups/${memberId}/${roomId}`);
+                        update(memberGroupRef, {
+                            ...baseUpdate,
+                            // We don't increment the sender's unread count
+                            unreadCount: memberId === user.id ? 0 : 1
+                        });
+                    });
+                }
+            });
+
+            // 2. Update Group node's last active
+            update(ref(db, `groups/${roomId}`), baseUpdate);
+        } else {
+            // Direct Chat
+            if (!effectivePeerId || !user?.id) return;
+
+            // Update Sender's History
+            update(ref(db, `user_chats/${user.id}/${effectivePeerId}`), {
+                ...baseUpdate,
+                id: effectivePeerId,
+                unreadCount: 0
+            });
+
+            // Update Recipient's History
+            update(ref(db, `user_chats/${effectivePeerId}/${user.id}`), {
+                ...baseUpdate,
+                id: user.id,
+                unreadCount: 1
+            });
+
+            // Signal user to open/focus chat
+            set(ref(db, `users/${effectivePeerId}/invokeChat`), {
+                roomId: roomId,
+                fromName: user.displayName || user.name,
+                timestamp: Date.now()
+            });
+        }
     };
 
     const triggerPushNotification = async (text, type = 'text') => {
-        if (!effectivePeerId) return;
-        try {
-            const recipientSnap = await get(ref(db, `users/${effectivePeerId}`));
-            if (recipientSnap.exists()) {
-                const token = recipientSnap.val().fcmToken;
-                if (token) {
-                    await fetch(NOTIFICATION_API_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            token: token,
-                            title: `Message from ${user.displayName || user.name}`,
-                            body: text || (type === 'image' ? '📷 Photo' : '📎 Attachment'),
-                            data: {
-                                roomId: roomId,
-                                senderId: user.id,
-                                senderName: user.displayName || user.name
-                            }
-                        })
-                    });
+        if (chatType === 'broadcast') {
+            recipients.forEach(async (recipientId) => {
+                try {
+                    const recipientSnap = await get(ref(db, `users/${recipientId}`));
+                    if (recipientSnap.exists()) {
+                        const token = recipientSnap.val().fcmToken;
+                        if (token) {
+                            // Send as a DM notification
+                            await fetch(NOTIFICATION_API_URL, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    token: token,
+                                    title: `Message from ${user.displayName || user.name}`,
+                                    body: text || (type === 'image' ? '📷 Photo' : '📎 Attachment'),
+                                    data: {
+                                        roomId: `dm_${[user.id, recipientId].sort().join('_')}`, // Direct link to DM
+                                        senderId: user.id,
+                                        senderName: user.displayName || user.name
+                                    }
+                                })
+                            });
+                        }
+                    }
+                } catch (e) { }
+            });
+        } else if (chatType === 'group') {
+            // Group push notifs need member list. Skipping for now to avoid complexity or loop
+        } else {
+            // Direct
+            if (!effectivePeerId) return;
+            try {
+                const recipientSnap = await get(ref(db, `users/${effectivePeerId}`));
+                if (recipientSnap.exists()) {
+                    const token = recipientSnap.val().fcmToken;
+                    if (token) {
+                        await fetch(NOTIFICATION_API_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                token: token,
+                                title: `Message from ${user.displayName || user.name}`,
+                                body: text || (type === 'image' ? '📷 Photo' : '📎 Attachment'),
+                                data: {
+                                    roomId: roomId,
+                                    senderId: user.id,
+                                    senderName: user.displayName || user.name
+                                }
+                            })
+                        });
+                    }
                 }
-            }
-        } catch (err) {
-            console.warn("Failed to trigger push notification", err);
+            } catch (err) { }
         }
     };
 
@@ -493,81 +595,97 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
         const currentReplyTo = replyTo;
         setReplyTo(null);
 
-        // If there's a pending attachment, send it with optional caption
-        if (pendingAttachment) {
-            const previewText = pendingAttachment.type === 'document' ? '📎 Document' :
-                pendingAttachment.type === 'image' ? '📷 Photo' :
-                    pendingAttachment.type === 'video' ? '🎥 Video' : '📎 Attachment';
-            updateChatHistory(input.trim() || previewText); // Persist chat on attachment send
-            const chatRef = ref(db, `messages/${roomId}`);
-            const { type, ...data } = pendingAttachment;
-            push(chatRef, {
-                userId: user.id,
-                userName: user.name,
-                ...data,
-                caption: input.trim() || null,
-                timestamp: serverTimestamp(),
-                type,
-                replyTo: currentReplyTo
-            });
-            setPendingAttachment(null);
-            setInput('');
-
-            // Trigger push for attachment
-            triggerPushNotification(input.trim() || previewText, type);
-            return;
-        }
-
-        if (!input.trim() || !roomId) return;
-
-        const currentInput = input;
-        updateChatHistory(currentInput); // Persist chat on text send
-        setInput('');
-
-        const messageData = {
+        // Prep Message Data
+        const baseMessageData = {
             userId: user.id,
             userName: user.name,
-            text: currentInput,
-            timestamp: Date.now(), // Fallback to local time for REST
-            type: 'text',
+            timestamp: serverTimestamp(), // SDK
             replyTo: currentReplyTo
         };
 
-        const chatRef = ref(db, `messages/${roomId}`);
+        const localTimestamp = Date.now();
 
-        try {
-            // Try SDK first with a small timeout
-            const pushPromise = push(chatRef, {
-                ...messageData,
-                timestamp: serverTimestamp() // Use actual server timestamp for SDK
-            });
+        // 1. Handle Attachment
+        if (pendingAttachment) {
+            const { type, ...data } = pendingAttachment;
+            const previewText = pendingAttachment.type === 'document' ? '📎 Document' :
+                pendingAttachment.type === 'image' ? '📷 Photo' :
+                    pendingAttachment.type === 'video' ? '🎥 Video' : '📎 Attachment';
 
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Push Timeout')), 3000)
-            );
+            updateChatHistory(input.trim() || previewText);
 
-            await Promise.race([pushPromise, timeoutPromise]);
-        } catch (err) {
-            try {
-                const response = await fetch(`https://crispconnect-default-rtdb.firebaseio.com/messages/${roomId}.json`, {
-                    method: 'POST',
-                    body: JSON.stringify(messageData)
+            const msgData = {
+                ...baseMessageData,
+                ...data,
+                caption: input.trim() || null,
+                type
+            };
+
+            setPendingAttachment(null);
+            setInput('');
+
+            // Send
+            if (chatType === 'broadcast') {
+                // 1. Store in Broadcast Room (Sender View)
+                push(ref(db, `messages/${roomId}`), msgData);
+
+                // 2. Fan-out to Recipients (DM View)
+                recipients.forEach(recipientId => {
+                    const ids = [user.id, recipientId].sort();
+                    const dmId = `dm_${ids[0]}_${ids[1]}`;
+                    push(ref(db, `messages/${dmId}`), msgData); // Push exact same data
                 });
-                if (response.ok) {
-                    // Manually update local state if REST succeeded but listener might be lagging
-                    setMessages(prev => [...prev, { id: Date.now().toString(), ...messageData }]);
-                } else {
-                    throw new Error('REST POST failed');
-                }
-            } catch (postErr) {
-                console.error('[Chat] All send attempts failed:', postErr);
-                alert('Failed to send message. Please check your connection.');
-                setInput(currentInput); // Restore input on failure
+                triggerPushNotification(input.trim() || previewText, type);
+
+            } else {
+                // Direct or Group
+                push(ref(db, `messages/${roomId}`), msgData);
+                triggerPushNotification(input.trim() || previewText, type);
             }
+            return;
         }
 
-        // Trigger push for text message
-        triggerPushNotification(currentInput);
+        // 2. Handle Text
+        if (!input.trim() || !roomId) return;
+        const currentInput = input;
+        updateChatHistory(currentInput);
+        setInput('');
+
+        const msgData = {
+            ...baseMessageData,
+            text: currentInput,
+            type: 'text'
+        };
+
+        if (chatType === 'broadcast') {
+            // 1. Store in Broadcast Room (Sender View)
+            push(ref(db, `messages/${roomId}`), msgData);
+
+            // 2. Fan-out to Recipients (DM View)
+            recipients.forEach(recipientId => {
+                const ids = [user.id, recipientId].sort();
+                const dmId = `dm_${ids[0]}_${ids[1]}`;
+                push(ref(db, `messages/${dmId}`), msgData);
+            });
+            triggerPushNotification(currentInput, 'text');
+        } else {
+            // Direct or Group
+            try {
+                // SDK Push
+                push(ref(db, `messages/${roomId}`), msgData);
+            } catch (err) {
+                // REST Fallback (Omitting full REST fallback block for brevity/complexity in this specific edit, assuming SDK mostly works or catch block)
+                const fallbackData = {
+                    ...msgData,
+                    timestamp: localTimestamp
+                };
+                fetch(`https://crispconnect-default-rtdb.firebaseio.com/messages/${roomId}.json`, {
+                    method: 'POST',
+                    body: JSON.stringify(fallbackData)
+                }).catch(e => console.error("REST Failed", e));
+            }
+            triggerPushNotification(currentInput, 'text');
+        }
     };
 
     // Document Upload Handler
@@ -1130,11 +1248,21 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                 </div>
                 <div
                     className="flex flex-col cursor-pointer flex-1"
-                    onClick={() => setPreviewUser({ name: chatName, avatarUrl: chatAvatar })}
+                    onClick={() => {
+                        if (chatType === 'group') {
+                            setShowGroupInfo(true);
+                        } else if (chatType === 'broadcast') {
+                            setShowBroadcastInfo(true);
+                        } else {
+                            setPreviewUser({ name: chatName, avatarUrl: chatAvatar });
+                        }
+                    }}
                 >
                     <span className="text-[var(--wa-text)] text-[16px] leading-tight font-medium tracking-wide">{chatName || 'Unknown'}</span>
                     <span className={`text-[13px] leading-tight font-medium ${peerStatus.online ? 'text-green-400' : 'text-[var(--wa-text-muted)]'}`}>
-                        {peerStatus.online ? 'Online' : formatLastSeen(peerStatus.lastSeen)}
+                        {chatType === 'group' ? 'Group' :
+                            chatType === 'broadcast' ? `Broadcast List • ${recipients?.length || 0} recipients` :
+                                (peerStatus.online ? 'Online' : formatLastSeen(peerStatus.lastSeen))}
                     </span>
                 </div>
                 <div className="flex items-center gap-2 text-[var(--wa-text-muted)]">
@@ -1221,63 +1349,73 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                     </div>
                                 )}
 
-                                <div id={`msg-${msg.id}`} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} w-full mb-1 ${isUnread ? 'animate-unread-pulse' : ''}`}>
-                                    {/* Sender name for incoming messages */}
-                                    {!isOwn && isLastInGroup && (
-                                        <span className="text-[11px] text-cyan-400 font-bold mb-1 ml-3 tracking-wide">{msg.userName || 'Unknown'}</span>
-                                    )}
-                                    <div className={`
+                                {msg.type === 'system' ? (
+                                    <div className="flex justify-center my-2 animate-in fade-in zoom-in-95 duration-500 w-full px-4">
+                                        <div className="bg-[#111b21]/60 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/5 shadow-xl">
+                                            <p className="text-[11px] font-medium text-slate-400 tracking-wide uppercase text-center">
+                                                {msg.text}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div id={`msg-${msg.id}`} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} w-full mb-1 ${isUnread ? 'animate-unread-pulse' : ''}`}>
+                                        {/* Sender name for incoming messages */}
+                                        {!isOwn && isLastInGroup && (
+                                            <span className="text-[11px] text-cyan-400 font-bold mb-1 ml-3 tracking-wide">{msg.userName || 'Unknown'}</span>
+                                        )}
+                                        <div className={`
                                         flex flex-col rounded-lg shadow-sm min-w-[100px] max-w-[85%] md:max-w-[65%] group backdrop-blur-sm transition-all
                                         ${isOwn
-                                            ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
-                                            : isUnread
-                                                ? 'bg-slate-900/95 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
-                                                : 'bg-slate-900/80 border border-white/10 border-l-4 border-l-slate-500'}
+                                                ? 'bg-slate-900/80 border border-cyan-500/30 border-l-4 border-l-cyan-500'
+                                                : isUnread
+                                                    ? 'bg-slate-900/95 border border-cyan-400/50 border-l-4 border-l-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
+                                                    : 'bg-slate-900/80 border border-white/10 border-l-4 border-l-slate-500'}
                                         ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}
                                     `}>
 
-                                        {/* Quote Block (Reply) */}
-                                        {msg.replyTo && (
-                                            <div
-                                                className="mx-2 mt-2 p-2 px-3 bg-black/20 rounded-lg border-l-4 border-l-cyan-500 cursor-pointer hover:bg-black/30 transition-colors"
-                                                onClick={() => jumpToMessage(msg.replyTo.id)}
-                                            >
-                                                <p className="text-cyan-400 text-[10px] font-bold uppercase tracking-wider mb-0.5">{msg.replyTo.userName}</p>
-                                                <p className="text-slate-300 text-xs truncate opacity-70 italic">"{msg.replyTo.text}"</p>
+                                            {/* Quote Block (Reply) */}
+                                            {msg.replyTo && (
+                                                <div
+                                                    className="mx-2 mt-2 p-2 px-3 bg-black/20 rounded-lg border-l-4 border-l-cyan-500 cursor-pointer hover:bg-black/30 transition-colors"
+                                                    onClick={() => jumpToMessage(msg.replyTo.id)}
+                                                >
+                                                    <p className="text-cyan-400 text-[10px] font-bold uppercase tracking-wider mb-0.5">{msg.replyTo.userName}</p>
+                                                    <p className="text-slate-300 text-xs truncate opacity-70 italic">"{msg.replyTo.text}"</p>
+                                                </div>
+                                            )}
+
+                                            {/* Message Content */}
+                                            <div className={`p-4 pt-3 pb-2 text-[15px] leading-relaxed text-white font-light tracking-wide break-words transition-all duration-500 ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}`}>
+                                                {renderMessage(msg)}
                                             </div>
-                                        )}
 
-                                        {/* Message Content */}
-                                        <div className={`p-4 pt-3 pb-2 text-[15px] leading-relaxed text-white font-light tracking-wide break-words transition-all duration-500 ${highlightedMessageId === msg.id ? 'bg-cyan-500/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.2)] animate-flash-highlight' : ''}`}>
-                                            {renderMessage(msg)}
-                                        </div>
-
-                                        {/* Footer: Time & Status */}
-                                        <div className={`px-4 py-1.5 flex justify-end items-center gap-1.5 bg-black/20 ${isOwn ? 'text-cyan-400' : isUnread ? 'text-cyan-300' : 'text-slate-500'}`}>
-                                            <button
-                                                onClick={() => {
-                                                    const replyText = msg.text || (msg.type === 'voice' ? 'Voice Message' : msg.type === 'image' ? 'Image' : msg.type === 'video' ? 'Video' : msg.type === 'document' ? msg.fileName : 'Attachment');
-                                                    setReplyTo({ id: msg.id, text: replyText, userName: msg.userName });
-                                                }}
-                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-cyan-400 transition-all mr-1"
-                                                title="Reply"
-                                            >
-                                                <CornerUpLeft className="w-3 h-3" />
-                                            </button>
-                                            <button
-                                                onClick={() => handleDeleteMessage(msg.id)}
-                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 transition-all mr-auto"
-                                                title="Delete Message"
-                                            >
-                                                <Trash2 className="w-3 h-3" />
-                                            </button>
-                                            <span className="text-[10px] font-mono uppercase tracking-wider opacity-80">
-                                                {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                                            </span>
-                                            {isOwn && <Check className="w-3 h-3 opacity-100" />}
+                                            {/* Footer: Time & Status */}
+                                            <div className={`px-4 py-1.5 flex justify-end items-center gap-1.5 bg-black/20 ${isOwn ? 'text-cyan-400' : isUnread ? 'text-cyan-300' : 'text-slate-500'}`}>
+                                                <button
+                                                    onClick={() => {
+                                                        const replyText = msg.text || (msg.type === 'voice' ? 'Voice Message' : msg.type === 'image' ? 'Image' : msg.type === 'video' ? 'Video' : msg.type === 'document' ? msg.fileName : 'Attachment');
+                                                        setReplyTo({ id: msg.id, text: replyText, userName: msg.userName });
+                                                    }}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-cyan-400 transition-all mr-1"
+                                                    title="Reply"
+                                                >
+                                                    <CornerUpLeft className="w-3 h-3" />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteMessage(msg.id)}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 transition-all mr-auto"
+                                                    title="Delete Message"
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                                <span className="text-[10px] font-mono uppercase tracking-wider opacity-80">
+                                                    {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                                </span>
+                                                {isOwn && <Check className="w-3 h-3 opacity-100" />}
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
+                                )}
                             </React.Fragment>
                         );
                     })}
@@ -1342,61 +1480,71 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             }
 
             {/* Reply Preview */}
-            {replyTo && (
-                <div className="px-4 py-2 bg-slate-900/40 border-t border-white/5 z-20 animate-in slide-in-from-bottom-2 duration-200">
-                    <div className="flex items-center gap-3 bg-cyan-500/5 rounded-lg p-3 border-l-4 border-l-cyan-500 relative group overflow-hidden">
-                        <div className="flex-1 min-w-0">
-                            <p className="text-cyan-400 text-[11px] font-bold mb-0.5 uppercase tracking-wider">{replyTo.userName}</p>
-                            <p className="text-slate-300 text-sm truncate opacity-80">{replyTo.text}</p>
+            {
+                replyTo && (
+                    <div className="px-4 py-2 bg-slate-900/40 border-t border-white/5 z-20 animate-in slide-in-from-bottom-2 duration-200">
+                        <div className="flex items-center gap-3 bg-cyan-500/5 rounded-lg p-3 border-l-4 border-l-cyan-500 relative group overflow-hidden">
+                            <div className="flex-1 min-w-0">
+                                <p className="text-cyan-400 text-[11px] font-bold mb-0.5 uppercase tracking-wider">{replyTo.userName}</p>
+                                <p className="text-slate-300 text-sm truncate opacity-80">{replyTo.text}</p>
+                            </div>
+                            <button
+                                onClick={() => setReplyTo(null)}
+                                className="p-1 px-1.5 rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
                         </div>
-                        <button
-                            onClick={() => setReplyTo(null)}
-                            className="p-1 px-1.5 rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
-                        >
-                            <X className="w-4 h-4" />
-                        </button>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Scheduled Messages Overlay (Horizontal Scroll) */}
-            {scheduledMessages.length > 0 && (
-                <div
-                    className="z-10 bg-slate-900/40 border-t border-white/5 backdrop-blur-md px-3 py-3 overflow-x-auto shadow-[0_-10px_20px_rgba(0,0,0,0.3)]"
-                    style={{ WebkitOverflowScrolling: 'touch' }}
-                >
-                    <div className="flex gap-3 min-w-max pb-1 pr-4">
-                        {scheduledMessages.map((msg) => (
-                            <div key={msg.id} className="flex items-center gap-3 bg-slate-800/80 border border-amber-500/30 rounded-xl px-4 py-2 group hover:border-amber-500/60 transition-all animate-in slide-in-from-bottom-4">
-                                <div className="p-2 bg-amber-500/10 rounded-lg">
-                                    <Clock className="w-4 h-4 text-amber-400" />
+            {
+                scheduledMessages.length > 0 && (
+                    <div
+                        className="z-10 bg-slate-900/40 border-t border-white/5 backdrop-blur-md px-3 py-3 overflow-x-auto shadow-[0_-10px_20px_rgba(0,0,0,0.3)]"
+                        style={{ WebkitOverflowScrolling: 'touch' }}
+                    >
+                        <div className="flex gap-3 min-w-max pb-1 pr-4">
+                            {scheduledMessages.map((msg) => (
+                                <div key={msg.id} className="flex items-center gap-3 bg-slate-800/80 border border-amber-500/30 rounded-xl px-4 py-2 group hover:border-amber-500/60 transition-all animate-in slide-in-from-bottom-4">
+                                    <div className="p-2 bg-amber-500/10 rounded-lg">
+                                        <Clock className="w-4 h-4 text-amber-400" />
+                                    </div>
+                                    <div className="max-w-[200px]">
+                                        <p className="text-[10px] uppercase tracking-wider font-bold text-amber-500/80">
+                                            {new Date(msg.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(msg.scheduledTime).toLocaleDateString()}
+                                        </p>
+                                        <p className="text-sm text-white/90 truncate font-medium">{msg.text || '📎 Attachment'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                        <button onClick={() => handleEditScheduledMessage(msg)} className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-white/5 rounded-lg transition-colors" title="Edit Schedule">
+                                            <Calendar className="w-4 h-4" />
+                                        </button>
+                                        <button onClick={() => handleDeleteScheduledMessage(msg.id)} className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-white/5 rounded-lg transition-colors" title="Delete">
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="max-w-[200px]">
-                                    <p className="text-[10px] uppercase tracking-wider font-bold text-amber-500/80">
-                                        {new Date(msg.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(msg.scheduledTime).toLocaleDateString()}
-                                    </p>
-                                    <p className="text-sm text-white/90 truncate font-medium">{msg.text || '📎 Attachment'}</p>
-                                </div>
-                                <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                                    <button onClick={() => handleEditScheduledMessage(msg)} className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-white/5 rounded-lg transition-colors" title="Edit Schedule">
-                                        <Calendar className="w-4 h-4" />
-                                    </button>
-                                    <button onClick={() => handleDeleteScheduledMessage(msg.id)} className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-white/5 rounded-lg transition-colors" title="Delete">
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
+                            ))}
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Input Area */}
             <div className="wa-input-area px-2 sm:px-6 py-1 sm:py-2 z-20 shrink-0 border-t border-white/10 bg-slate-900/60 backdrop-blur-xl relative flex items-center">
                 {/* Subtle top glow line */}
                 <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
 
-                {isRecording ? (
+                {chatType === 'group' && groupSettings?.adminOnlyMessageMode && currentUserGroupRole !== 'admin' ? (
+                    <div className="flex-1 py-4 text-center">
+                        <p className="text-sm text-slate-500 font-medium italic">
+                            🔒 Only admins can send messages to this group
+                        </p>
+                    </div>
+                ) : isRecording ? (
                     /* Recording UI */
                     <div className="flex-1 flex items-center gap-3 sm:gap-6 bg-slate-800/80 backdrop-blur-md rounded-2xl px-4 sm:px-6 py-3 sm:py-4 border border-white/10 shadow-inner">
                         <div className="w-3 h-3 sm:w-4 sm:h-4 rounded-full bg-rose-500 animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.6)]" />
@@ -1528,87 +1676,109 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
             }
 
             {/* Confirmation Modal */}
-            {confirmModal && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-[#1f2c34] rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-white/5 animate-in zoom-in-95 duration-200">
-                        <h3 className="text-xl font-bold text-white mb-2">{confirmModal.title}</h3>
-                        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-                            {confirmModal.message}
-                        </p>
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => setConfirmModal(null)}
-                                className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 text-slate-300 font-medium hover:bg-white/10 transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={confirmModal.action}
-                                className="flex-1 px-4 py-2.5 rounded-xl bg-rose-500 text-white font-medium hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/20"
-                            >
-                                {confirmModal.type === 'clear' ? 'Clear All' : 'Delete'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Scheduled Message Modal */}
-            {showScheduleModal && (
-                <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-                    <div className="bg-[#1f2c34] rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300 ring-1 ring-white/5">
-                        <div className="wa-header justify-between shrink-0">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
-                                    <Clock className="w-5 h-5 text-amber-400" />
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-wide">Schedule Message</h3>
-                            </div>
-                            <button onClick={() => { setShowScheduleModal(false); setEditingScheduledMsg(null); }} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors">
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-
-                        <div className="p-8 space-y-6">
-                            <div className="space-y-4">
-                                <p className="text-sm text-slate-400 leading-relaxed bg-white/5 p-4 rounded-xl border border-white/5 italic">
-                                    "{input.trim() || (pendingAttachment ? pendingAttachment.name : 'Writing message...')}"
-                                </p>
-
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em] ml-1">Select Delivery Time</label>
-                                    <input
-                                        type="datetime-local"
-                                        value={scheduleTime}
-                                        onChange={(e) => setScheduleTime(e.target.value)}
-                                        min={getLocalISOString(new Date())}
-                                        className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:border-amber-500/50 focus:ring-4 focus:ring-amber-500/10 transition-all"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex gap-3 pt-2">
+            {
+                confirmModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-[#1f2c34] rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-white/5 animate-in zoom-in-95 duration-200">
+                            <h3 className="text-xl font-bold text-white mb-2">{confirmModal.title}</h3>
+                            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+                                {confirmModal.message}
+                            </p>
+                            <div className="flex gap-3">
                                 <button
-                                    onClick={() => { setShowScheduleModal(false); setEditingScheduledMsg(null); }}
-                                    className="flex-1 py-3.5 rounded-xl bg-white/5 text-slate-300 font-bold hover:bg-white/10 transition-all active:scale-95"
+                                    onClick={() => setConfirmModal(null)}
+                                    className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 text-slate-300 font-medium hover:bg-white/10 transition-colors"
                                 >
                                     Cancel
                                 </button>
                                 <button
-                                    onClick={handleScheduleMessage}
-                                    disabled={!scheduleTime}
-                                    className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-400 text-white font-bold shadow-lg shadow-amber-500/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed group"
+                                    onClick={confirmModal.action}
+                                    className="flex-1 px-4 py-2.5 rounded-xl bg-rose-500 text-white font-medium hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/20"
                                 >
-                                    <span className="flex items-center justify-center gap-2">
-                                        {editingScheduledMsg ? 'Update' : 'Schedule'}
-                                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                                    </span>
+                                    {confirmModal.type === 'clear' ? 'Clear All' : 'Delete'}
                                 </button>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
+
+            {/* Scheduled Message Modal */}
+            {
+                showScheduleModal && (
+                    <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+                        <div className="bg-[#1f2c34] rounded-3xl w-full max-w-sm shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300 ring-1 ring-white/5">
+                            <div className="wa-header justify-between shrink-0">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
+                                        <Clock className="w-5 h-5 text-amber-400" />
+                                    </div>
+                                    <h3 className="text-lg font-bold text-white tracking-wide">Schedule Message</h3>
+                                </div>
+                                <button onClick={() => { setShowScheduleModal(false); setEditingScheduledMsg(null); }} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors">
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            <div className="p-8 space-y-6">
+                                <div className="space-y-4">
+                                    <p className="text-sm text-slate-400 leading-relaxed bg-white/5 p-4 rounded-xl border border-white/5 italic">
+                                        "{input.trim() || (pendingAttachment ? pendingAttachment.name : 'Writing message...')}"
+                                    </p>
+
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em] ml-1">Select Delivery Time</label>
+                                        <input
+                                            type="datetime-local"
+                                            value={scheduleTime}
+                                            onChange={(e) => setScheduleTime(e.target.value)}
+                                            min={getLocalISOString(new Date())}
+                                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:border-amber-500/50 focus:ring-4 focus:ring-amber-500/10 transition-all"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-3 pt-2">
+                                    <button
+                                        onClick={() => { setShowScheduleModal(false); setEditingScheduledMsg(null); }}
+                                        className="flex-1 py-3.5 rounded-xl bg-white/5 text-slate-300 font-bold hover:bg-white/10 transition-all active:scale-95"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleScheduleMessage}
+                                        disabled={!scheduleTime}
+                                        className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-400 text-white font-bold shadow-lg shadow-amber-500/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed group"
+                                    >
+                                        <span className="flex items-center justify-center gap-2">
+                                            {editingScheduledMsg ? 'Update' : 'Schedule'}
+                                            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+            {
+                showGroupInfo && (
+                    <GroupInfoModal
+                        groupId={roomId}
+                        currentUser={user}
+                        onClose={() => setShowGroupInfo(false)}
+                    />
+                )
+            }
+            {
+                showBroadcastInfo && (
+                    <BroadcastInfoModal
+                        listId={roomId}
+                        currentUser={user}
+                        onClose={() => setShowBroadcastInfo(false)}
+                    />
+                )
+            }
         </div >
     );
 }

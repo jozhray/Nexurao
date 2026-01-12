@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { ref, onValue, set, remove, get, query, limitToLast } from 'firebase/database';
-import { Search, Trash, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Trash, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp, MoreVertical, Plus, Megaphone, Trash2 } from 'lucide-react';
+import CreateGroupModal from './CreateGroupModal';
+import CreateBroadcastListModal from './CreateBroadcastListModal';
 
 // Helper to validate if a string is a valid URL or data URL (excludes blob: URLs which expire)
 const isValidAvatarUrl = (url) => {
@@ -32,6 +34,13 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
     const searchInputRef = React.useRef(null);
     const [isContactsExpanded, setIsContactsExpanded] = useState(false);
 
+    // Group & Broadcast State
+    const [showGroupModal, setShowGroupModal] = useState(false);
+    const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+    const [userGroups, setUserGroups] = useState({}); // { groupId: { name, addedAt } }
+    const [broadcastLists, setBroadcastLists] = useState({}); // { listId: { name, recipients... } }
+    const [showMenu, setShowMenu] = useState(false);
+
     // Confirmation modal state: { type: 'delete' | 'remove' | 'call', user: {...}, action: fn }
     const [confirmAction, setConfirmAction] = useState(null);
 
@@ -41,6 +50,10 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
     const isLongPressActiveRef = useRef(false);
 
     const handlePressStart = (e, userId) => {
+        // Prevent default only for touch to stop system menu if possible, 
+        // but carefully as it might block scroll. 
+        // Better to just rely on onContextMenu preventDefault.
+
         isLongPressActiveRef.current = false;
         // Clear any existing timer
         if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -53,13 +66,19 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                 if (window.navigator?.vibrate) {
                     window.navigator.vibrate(50);
                 }
-            } catch (err) {
-                // Ignore vibration failures (e.g. intervention)
-            }
+            } catch (err) { }
         }, 600); // 600ms for long press
     };
 
     const handlePressEnd = () => {
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    };
+
+    const handleTouchMove = () => {
+        // If the user moves their finger significantly, cancel the long press
         if (longPressTimerRef.current) {
             clearTimeout(longPressTimerRef.current);
             longPressTimerRef.current = null;
@@ -84,8 +103,6 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
     useEffect(() => {
         let sdkLoaded = false;
         const usersRef = ref(db, 'users');
-
-
 
         // SDK Listener
         const unsubscribe = onValue(usersRef, (snapshot) => {
@@ -131,6 +148,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
     }, []);
 
     // Load Chat History IDs with SDK + REST Fallback
+    const [userChats, setUserChats] = useState({}); // { userId: { lastActive, ... } }
     useEffect(() => {
         if (!currentUser) return;
 
@@ -141,11 +159,13 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
             sdkLoaded = true;
             if (snapshot.exists()) {
                 const data = snapshot.val();
+                setUserChats(data);
                 const sortedIds = Object.entries(data)
                     .sort(([, a], [, b]) => (b.lastActive || 0) - (a.lastActive || 0))
                     .map(([id]) => id);
                 setChatHistoryIds(sortedIds);
             } else {
+                setUserChats({});
                 setChatHistoryIds([]);
             }
         }, (error) => {
@@ -161,6 +181,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                 if (response.ok) {
                     const data = await response.json();
                     if (data) {
+                        setUserChats(data);
                         const sortedIds = Object.entries(data)
                             .sort(([, a], [, b]) => (b.lastActive || 0) - (a.lastActive || 0))
                             .map(([id]) => id);
@@ -194,6 +215,24 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
         });
 
         return () => unsubscribe();
+    }, [currentUser]);
+
+    // Load User's Groups
+    useEffect(() => {
+        if (!currentUser) return;
+        const groupsRef = ref(db, `user_groups/${currentUser.id}`);
+        return onValue(groupsRef, (snapshot) => {
+            setUserGroups(snapshot.exists() ? snapshot.val() : {});
+        });
+    }, [currentUser]);
+
+    // Load User's Broadcast Lists
+    useEffect(() => {
+        if (!currentUser) return;
+        const listsRef = ref(db, `broadcast_lists/${currentUser.id}`);
+        return onValue(listsRef, (snapshot) => {
+            setBroadcastLists(snapshot.exists() ? snapshot.val() : {});
+        });
     }, [currentUser]);
 
     // Load User's Call History
@@ -260,94 +299,154 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
         return () => clearTimeout(timer);
     }, [searchTerm, viewMode, chatHistoryIds, currentUser]);
 
+    // Combined list logic for display
+    const mergedListItems = React.useMemo(() => {
+        let items = [];
+
+        // 1. Groups
+        Object.entries(userGroups).forEach(([id, data]) => {
+            items.push({
+                id,
+                name: data.name,
+                type: 'group',
+                timestamp: data.timestamp || data.lastActive || data.addedAt || 0,
+                avatarUrl: data.avatarUrl || null
+            });
+        });
+
+        // 2. Broadcast Lists
+        Object.entries(broadcastLists).forEach(([id, data]) => {
+            items.push({
+                id,
+                name: data.name,
+                type: 'broadcast',
+                timestamp: data.timestamp || data.lastActive || data.createdAt || 0,
+                recipients: data.recipients
+            });
+        });
+
+        // 3. Direct Chats (People)
+        chatHistoryIds.forEach(id => {
+            const user = allUsers.find(u => u.id === id);
+            const chatData = userChats[id] || {};
+            if (user) {
+                items.push({
+                    ...user,
+                    type: 'user',
+                    timestamp: chatData.lastActive || chatData.timestamp || 0
+                });
+            }
+        });
+
+        // Sort everything by timestamp descending
+        return items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    }, [userGroups, broadcastLists, chatHistoryIds, allUsers, userChats]);
+
     // Filter users - exclude current user and get chat history users
     const otherUsers = allUsers.filter(u => u.id !== currentUser?.id);
     const chatHistoryUsers = chatHistoryIds.map(id => allUsers.find(u => u.id === id)).filter(Boolean);
     const contactUsers = allUsers.filter(u => contactIds.includes(u.id));
 
+    let displayedItems = [];
+
+    // Legacy support alias (so we don't break existing code that uses displayedUsers if any remains)
     let displayedUsers = [];
-    if (viewMode === 'history') {
-        displayedUsers = chatHistoryUsers.filter(u => {
-            if (!searchTerm) return true;
-            const nameMatch = (u.displayName || u.name)?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                u.name?.toLowerCase().includes(searchTerm.toLowerCase());
-            if (nameMatch) return true;
-            const ids = [currentUser.id, u.id].sort();
-            const roomId = `dm_${ids[0]}_${ids[1]}`;
-            const messages = messagesByRoom[roomId] || [];
-            return messages.some(m => m.text?.toLowerCase().includes(searchTerm.toLowerCase()));
-        });
-    } else if (viewMode === 'contacts') {
-        displayedUsers = contactUsers.filter(u => {
-            if (!searchTerm) return true;
-            const searchLower = searchTerm.toLowerCase();
-            const nameMatch = (u.displayName || u.name)?.toLowerCase().includes(searchLower) ||
-                u.name?.toLowerCase().includes(searchLower);
-            if (nameMatch) return true;
 
-            // Content search
-            const ids = [currentUser.id, u.id].sort();
-            const roomId = `dm_${ids[0]}_${ids[1]}`;
-            const messages = messagesByRoom[roomId] || [];
-            return messages.some(m => m.text?.toLowerCase().includes(searchLower));
-        });
-    } else if (viewMode === 'call') {
-        // Call mode: show call history when no search, or search results
-        if (searchTerm) {
-            displayedUsers = otherUsers.filter(u => {
-                const searchLower = searchTerm.toLowerCase();
-                const nameMatch = (u.displayName || u.name)?.toLowerCase().includes(searchLower) ||
-                    u.name?.toLowerCase().includes(searchLower);
-                if (nameMatch) return true;
+    if (viewMode === 'history' || viewMode === 'directory') {
+        // Show mixed list in history/directory views
+        if (!searchTerm && viewMode === 'directory') {
+            displayedItems = mergedListItems;
+        } else if (searchTerm) {
+            displayedItems = mergedListItems.filter(item =>
+                item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                item.displayName?.toLowerCase().includes(searchTerm.toLowerCase())
+            );
 
-                // Content search
-                const ids = [currentUser.id, u.id].sort();
-                const roomId = `dm_${ids[0]}_${ids[1]}`;
-                const messages = messagesByRoom[roomId] || [];
-                return messages.some(m => m.text?.toLowerCase().includes(searchLower));
-            });
+            if (viewMode === 'directory') {
+                const matchingContacts = contactUsers.filter(u =>
+                    !chatHistoryIds.includes(u.id) &&
+                    (u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        u.displayName?.toLowerCase().includes(searchTerm.toLowerCase()))
+                ).map(u => ({ ...u, type: 'user' }));
+                displayedItems = [...displayedItems, ...matchingContacts];
+            }
         } else {
-            // Show users from call history
-            const callHistoryUserIds = [...new Set(callHistory.map(c => c.oderId))];
-            displayedUsers = otherUsers.filter(u => callHistoryUserIds.includes(u.id));
-            // Sort by most recent call
-            displayedUsers.sort((a, b) => {
-                const aLastCall = callHistory.filter(c => c.oderId === a.id).sort((x, y) => y.timestamp - x.timestamp)[0];
-                const bLastCall = callHistory.filter(c => c.oderId === b.id).sort((x, y) => y.timestamp - x.timestamp)[0];
-                return (bLastCall?.timestamp || 0) - (aLastCall?.timestamp || 0);
-            });
+            displayedItems = mergedListItems;
         }
-    } else {
-        // directory mode
+    } else if (viewMode === 'contacts') {
+        displayedItems = contactUsers.map(u => ({ ...u, type: 'user' })).filter(u =>
+            !searchTerm ||
+            u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            u.displayName?.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+    } else if (viewMode === 'call') {
+        // Call mode logic: populate displayedItems
         if (searchTerm) {
-            displayedUsers = otherUsers.filter(u => {
+            displayedItems = otherUsers.filter(u => {
                 const searchLower = searchTerm.toLowerCase();
                 const nameMatch = (u.displayName || u.name)?.toLowerCase().includes(searchLower) ||
                     u.name?.toLowerCase().includes(searchLower);
                 if (nameMatch) return true;
-
-                // Content search
                 const ids = [currentUser.id, u.id].sort();
                 const roomId = `dm_${ids[0]}_${ids[1]}`;
                 const messages = messagesByRoom[roomId] || [];
                 return messages.some(m => m.text?.toLowerCase().includes(searchLower));
-            });
+            }).map(u => ({ ...u, type: 'user' }));
         } else {
-            // Show chat history users initially for New Chat
-            displayedUsers = chatHistoryUsers;
+            const callHistoryUserIds = [...new Set(callHistory.map(c => c.oderId))];
+            displayedItems = otherUsers.filter(u => callHistoryUserIds.includes(u.id))
+                .sort((a, b) => {
+                    const aLastCall = callHistory.filter(c => c.oderId === a.id).sort((x, y) => y.timestamp - x.timestamp)[0];
+                    const bLastCall = callHistory.filter(c => c.oderId === b.id).sort((x, y) => y.timestamp - x.timestamp)[0];
+                    return (bLastCall?.timestamp || 0) - (aLastCall?.timestamp || 0);
+                }).map(u => ({ ...u, type: 'user' }));
         }
     }
 
-    // Exact match sorting: if search term matches a name exactly, put it first
+    // Assign to displayedUsers for back-compat
+    displayedUsers = displayedItems;
+
+    // Exact match sorting
     if (searchTerm) {
-        displayedUsers.sort((a, b) => {
-            const aExact = (a.displayName || a.name)?.toLowerCase() === searchTerm.toLowerCase() || a.name?.toLowerCase() === searchTerm.toLowerCase();
-            const bExact = (b.displayName || b.name)?.toLowerCase() === searchTerm.toLowerCase() || b.name?.toLowerCase() === searchTerm.toLowerCase();
+        displayedItems.sort((a, b) => {
+            const aName = a.displayName || a.name;
+            const bName = b.displayName || b.name;
+            const aExact = aName?.toLowerCase() === searchTerm.toLowerCase();
+            const bExact = bName?.toLowerCase() === searchTerm.toLowerCase();
             if (aExact && !bExact) return -1;
             if (!aExact && bExact) return 1;
             return 0;
         });
     }
+
+    // Helper to get display props
+    const getItemProps = (item) => {
+        if (item.type === 'group') {
+            return {
+                id: item.id,
+                name: item.name,
+                subtext: 'Group',
+                avatar: item.avatarUrl,
+                isGroup: true
+            };
+        } else if (item.type === 'broadcast') {
+            return {
+                id: item.id,
+                name: item.name,
+                subtext: `${item.recipients?.length || 0} recipients`,
+                avatar: null,
+                isBroadcast: true
+            };
+        } else {
+            return {
+                id: item.id,
+                name: item.displayName || item.name,
+                subtext: `@${item.name}`,
+                avatar: item.avatarUrl,
+                isUser: true
+            };
+        }
+    };
 
     const handleSelectUser = (otherUser, allowCall = true) => {
         let matchingMsgIds = [];
@@ -507,7 +606,52 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                         </button>
                     )}
                 </div>
+
+                {/* Header Menu Actions */}
+                <div className="relative">
+                    <button
+                        onClick={() => setShowMenu(!showMenu)}
+                        className="p-2 hover:bg-white/5 rounded-full text-[#aebac1] transition-colors"
+                    >
+                        <MoreVertical className="w-5 h-5" />
+                    </button>
+
+                    {showMenu && (
+                        <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--wa-panel)] rounded-lg shadow-xl border border-[var(--wa-border)] z-50 py-1 animate-in fade-in zoom-in-95 duration-150">
+                            <button
+                                onClick={() => { setShowGroupModal(true); setShowMenu(false); }}
+                                className="w-full text-left px-4 py-2 text-sm text-[var(--wa-text)] hover:bg-[var(--wa-bg)] flex items-center gap-2"
+                            >
+                                <Users className="w-4 h-4" />
+                                New Group
+                            </button>
+                            <button
+                                onClick={() => { setShowBroadcastModal(true); setShowMenu(false); }}
+                                className="w-full text-left px-4 py-2 text-sm text-[var(--wa-text)] hover:bg-[var(--wa-bg)] flex items-center gap-2"
+                            >
+                                <Megaphone className="w-4 h-4" />
+                                New Broadcast
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
+
+            {/* Modals */}
+            {showGroupModal && (
+                <CreateGroupModal
+                    onClose={() => setShowGroupModal(false)}
+                    currentUser={currentUser}
+                    contacts={contactUsers}
+                />
+            )}
+            {showBroadcastModal && (
+                <CreateBroadcastListModal
+                    onClose={() => setShowBroadcastModal(false)}
+                    currentUser={currentUser}
+                    contacts={contactUsers}
+                />
+            )}
 
             {/* List */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -519,7 +663,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                 {viewMode === 'directory' && (
                     <div className="px-4 py-3 border-b border-[var(--wa-border)] bg-[var(--wa-bg)] sticky top-0 z-10 flex items-center">
                         <span className="text-xs font-bold text-[#00a884] uppercase tracking-wider">
-                            {searchTerm ? `Search Results (${displayedUsers.length})` : `Recent Chat (${chatHistoryUsers.length})`}
+                            {searchTerm ? `Search Results (${displayedItems.length})` : `Recent Chat (${chatHistoryUsers.length})`}
                         </span>
                     </div>
                 )}
@@ -529,7 +673,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                         {searchTerm ? (
                             <div className="px-4 py-3 border-b border-[var(--wa-border)] bg-[var(--wa-bg)] sticky top-0 z-10 flex items-center">
                                 <span className="text-xs font-bold text-[#00a884] uppercase tracking-wider">
-                                    Search Results ({displayedUsers.length})
+                                    Search Results ({displayedItems.length})
                                 </span>
                             </div>
                         ) : (
@@ -554,10 +698,12 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                             contactUsers.map(user => (
                                                 <div
                                                     key={`contact-${user.id}`}
+                                                    onContextMenu={(e) => e.preventDefault()}
                                                     onMouseDown={(e) => handlePressStart(e, user.id)}
                                                     onMouseUp={handlePressEnd}
                                                     onMouseLeave={handlePressEnd}
                                                     onTouchStart={(e) => handlePressStart(e, user.id)}
+                                                    onTouchMove={handleTouchMove}
                                                     onTouchEnd={handlePressEnd}
                                                     onClick={() => {
                                                         if (isLongPressActiveRef.current) {
@@ -636,7 +782,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                 {/* Recent Calls Section */}
                                 <div className="px-4 py-3 border-b border-[var(--wa-border)] bg-[var(--wa-bg)] flex items-center">
                                     <span className="text-xs font-bold text-[#00a884] uppercase tracking-wider">
-                                        Recent Calls ({displayedUsers.length})
+                                        Recent Calls ({displayedItems.length})
                                     </span>
                                 </div>
                             </>
@@ -649,180 +795,148 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                     </div>
                 )}
 
-                {displayedUsers.length > 0 ? (
-                    displayedUsers.map(user => (
-                        <div
-                            key={user.id}
-                            onMouseDown={(e) => handlePressStart(e, user.id)}
-                            onMouseUp={handlePressEnd}
-                            onMouseLeave={handlePressEnd}
-                            onTouchStart={(e) => handlePressStart(e, user.id)}
-                            onTouchEnd={handlePressEnd}
-                            onContextMenu={(e) => e.preventDefault()}
-                            className="flex items-center px-4 hover:bg-[var(--wa-panel)] active:bg-[var(--wa-panel)]/70 cursor-pointer group transition-colors border-b border-[var(--wa-border)]/50 relative"
-                            style={{ gap: '2px' }}
-                            onClick={() => {
-                                if (isLongPressActiveRef.current) {
-                                    isLongPressActiveRef.current = false;
-                                    return;
-                                }
-                                if (actionsUserId === user.id) {
-                                    setActionsUserId(null);
-                                } else if (!actionsUserId) {
-                                    handleSelectUser(user);
-                                }
-                            }}
-                        >
+                {(viewMode === 'history' || viewMode === 'directory' || viewMode === 'contacts' || viewMode === 'call') ? (
+                    // UNIFIED LIST RENDERING
+                    displayedItems.map(item => {
+                        const props = getItemProps(item);
+                        return (
                             <div
-                                className="shrink-0 py-3"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPreviewUser(user);
+                                key={item.id}
+                                onContextMenu={(e) => e.preventDefault()}
+                                onMouseDown={(e) => item.type === 'user' && handlePressStart(e, item.id)}
+                                onMouseUp={handlePressEnd}
+                                onMouseLeave={handlePressEnd}
+                                onTouchStart={(e) => item.type === 'user' && handlePressStart(e, item.id)}
+                                onTouchMove={handleTouchMove}
+                                onTouchEnd={handlePressEnd}
+                                onClick={() => {
+                                    if (isLongPressActiveRef.current) {
+                                        isLongPressActiveRef.current = false;
+                                        return;
+                                    }
+                                    if (item.type === 'user') {
+                                        handleSelectUser(item);
+                                    } else {
+                                        onStartChat(item);
+                                    }
                                 }}
+                                className="flex items-center px-4 hover:bg-[var(--wa-panel)] cursor-pointer group transition-colors border-b border-[var(--wa-border)]/50 relative"
                             >
-                                <div className="w-12 h-12 rounded-full bg-slate-600 flex items-center justify-center text-white font-medium text-lg overflow-hidden ring-1 ring-white/10 hover:ring-white/30 transition-all cursor-pointer">
-                                    {isValidAvatarUrl(user.avatarUrl) ? (
-                                        <img src={user.avatarUrl} alt={user.displayName || user.name} className="w-full h-full object-cover" />
-                                    ) : (
-                                        (user.displayName || user.name)?.[0]?.toUpperCase() || '?'
+                                <div
+                                    className="shrink-0 py-3"
+                                    onClick={(e) => {
+                                        if (item.type === 'user') {
+                                            e.stopPropagation();
+                                            setPreviewUser(item);
+                                        }
+                                    }}
+                                >
+                                    <div className="w-12 h-12 rounded-full bg-slate-600 flex items-center justify-center text-white font-medium text-lg overflow-hidden ring-1 ring-white/10 hover:ring-white/30 transition-all cursor-pointer">
+                                        {item.type === 'group' ? (
+                                            <Users className="w-6 h-6" />
+                                        ) : item.type === 'broadcast' ? (
+                                            <Megaphone className="w-6 h-6" />
+                                        ) : props.avatar ? (
+                                            <img src={props.avatar} alt={props.name} className="w-full h-full object-cover" />
+                                        ) : (
+                                            props.name?.[0]?.toUpperCase() || '?'
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="flex-1 min-w-0 py-3 ml-3 group-hover:border-transparent transition-colors">
+                                    <div className="flex justify-between items-baseline mb-1">
+                                        <div className="flex flex-col min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="text-[17px] font-normal text-[var(--wa-text)] truncate">{props.name}</h3>
+                                                {(() => {
+                                                    // Unread count logic only for direct chats for now, or groups if extended
+                                                    // Assuming unreadCounts handles basic group IDs too if keys match
+                                                    // But for now keeping it simple
+                                                    // If it's a DM, id format is user ID. Room ID is dm_...
+                                                    if (item.type === 'user') {
+                                                        const ids = [currentUser.id, item.id].sort();
+                                                        const roomId = `dm_${ids[0]}_${ids[1]}`;
+                                                        const count = unreadCounts[roomId];
+                                                        if (count > 0) {
+                                                            return (
+                                                                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#00a884] text-[#111b21] text-[10px] font-black shadow-sm shrink-0">
+                                                                    {count}
+                                                                </span>
+                                                            );
+                                                        }
+                                                    }
+                                                    return null;
+                                                })()}
+                                            </div>
+                                            <span className="text-xs text-[var(--wa-text-muted)] truncate">{props.subtext}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Action Overlay Only for Users for now */}
+                                    {item.type === 'user' && actionsUserId === item.id && (
+                                        <div
+                                            className="absolute inset-0 bg-[var(--wa-panel)]/95 z-40 flex items-stretch animate-in fade-in zoom-in-95 duration-200 backdrop-blur-md"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <div className="flex-1 flex items-center justify-around px-2">
+                                                <button
+                                                    onClick={() => { handleSelectUser(item); setActionsUserId(null); }}
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                >
+                                                    <MessageCircle className="retro-iridescent" />
+                                                    <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Chat</span>
+                                                </button>
+
+                                                <button
+                                                    onClick={(e) => { handleQuickCall(e, item); setActionsUserId(null); }}
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                >
+                                                    <Phone className="retro-iridescent" />
+                                                    <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Call</span>
+                                                </button>
+
+                                                {isContact(item.id) ? (
+                                                    <button
+                                                        onClick={(e) => { handleRemoveContact(e, item.id); setActionsUserId(null); }}
+                                                        className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                    >
+                                                        <UserMinus className="retro-iridescent-orange" />
+                                                        <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter">Remove</span>
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={(e) => { handleAddContact(e, item); setActionsUserId(null); }}
+                                                        className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                    >
+                                                        <UserPlus className="retro-iridescent" />
+                                                        <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Add</span>
+                                                    </button>
+                                                )}
+
+                                                {(viewMode === 'history' || (viewMode === 'directory' && !searchTerm) || (viewMode === 'directory' && chatHistoryIds.includes(item.id))) && (
+                                                    <button
+                                                        onClick={(e) => { handleDeleteChat(e, item.id); setActionsUserId(null); }}
+                                                        className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                    >
+                                                        <Trash className="retro-iridescent-orange" />
+                                                        <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter">Delete</span>
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={() => setActionsUserId(null)}
+                                                className="px-4 flex items-center justify-center border-l border-white/5 hover:bg-white/5 text-[#8696a0]"
+                                            >
+                                                <X className="w-5 h-5" />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             </div>
-                            <div className="flex-1 min-w-0 py-3 group-hover:border-transparent transition-colors">
-                                <div className="flex justify-between items-baseline mb-1">
-                                    <div className="flex flex-col min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <h3 className="text-[17px] font-normal text-[var(--wa-text)] truncate">{user.displayName || user.name}</h3>
-                                            {(() => {
-                                                const ids = [currentUser.id, user.id].sort();
-                                                const roomId = `dm_${ids[0]}_${ids[1]}`;
-                                                const count = unreadCounts[roomId];
-                                                if (count > 0) {
-                                                    return (
-                                                        <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#00a884] text-[#111b21] text-[10px] font-black shadow-sm shrink-0">
-                                                            {count}
-                                                        </span>
-                                                    );
-                                                }
-                                                return null;
-                                            })()}
-                                        </div>
-                                        <span className="text-xs text-[var(--wa-text-muted)] truncate">@{user.name}</span>
-                                        {/* Call info for call view */}
-                                        {viewMode === 'call' && (() => {
-                                            const lastCall = getLastCallInfo(user.id);
-                                            const callCount = getCallsForUser(user.id).length;
-                                            if (lastCall) {
-                                                return (
-                                                    <div className="flex items-center gap-2 mt-1">
-                                                        <span className={`text-xs ${lastCall.type === 'incoming' ? 'text-green-400' : lastCall.type === 'missed' ? 'text-rose-400' : 'text-[#00a884]'}`}>
-                                                            {lastCall.type === 'incoming' ? '↙' : lastCall.type === 'missed' ? '✗' : '↗'}
-                                                            {' '}{lastCall.type === 'incoming' ? 'Incoming' : lastCall.type === 'missed' ? 'Missed' : 'Outgoing'}
-                                                        </span>
-                                                        <span className="text-xs text-[var(--wa-text-muted)]">
-                                                            {formatCallTime(lastCall.timestamp)}
-                                                            {lastCall.duration > 0 && ` • ${formatCallDuration(lastCall.duration)}`}
-                                                        </span>
-                                                        {callCount > 1 && (
-                                                            <span className="text-xs text-[#00a884]">({callCount} calls)</span>
-                                                        )}
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        })()}
-                                    </div>
-                                </div>
-                                {/* Action Overlay */}
-                                {actionsUserId === user.id && (
-                                    <div
-                                        className="absolute inset-0 bg-[var(--wa-panel)]/95 z-40 flex items-stretch animate-in fade-in zoom-in-95 duration-200 backdrop-blur-md"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <div className="flex-1 flex items-center justify-around px-2">
-                                            {/* Chat Button */}
-                                            <button
-                                                onClick={() => { handleSelectUser(user); setActionsUserId(null); }}
-                                                className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
-                                            >
-                                                <MessageCircle className="retro-iridescent" />
-                                                <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Chat</span>
-                                            </button>
-
-                                            {/* Call Button */}
-                                            <button
-                                                onClick={(e) => { handleQuickCall(e, user); setActionsUserId(null); }}
-                                                className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
-                                            >
-                                                <Phone className="retro-iridescent" />
-                                                <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Call</span>
-                                            </button>
-
-                                            {/* Add/Remove Contact */}
-                                            {isContact(user.id) ? (
-                                                <button
-                                                    onClick={(e) => { handleRemoveContact(e, user.id); setActionsUserId(null); }}
-                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
-                                                >
-                                                    <UserMinus className="retro-iridescent-orange" />
-                                                    <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter">Remove</span>
-                                                </button>
-                                            ) : (
-                                                <button
-                                                    onClick={(e) => { handleAddContact(e, user); setActionsUserId(null); }}
-                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
-                                                >
-                                                    <UserPlus className="retro-iridescent" />
-                                                    <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Add</span>
-                                                </button>
-                                            )}
-
-                                            {/* Info Button (if needed) */}
-                                            {viewMode === 'call' && getCallsForUser(user.id).length > 0 && (
-                                                <button
-                                                    onClick={(e) => { handleShowCallHistory(e, user); setActionsUserId(null); }}
-                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95"
-                                                >
-                                                    <Info className="w-5 h-5 text-[#8696a0]" />
-                                                    <span className="text-[9px] text-[#8696a0] font-bold uppercase tracking-tighter">Info</span>
-                                                </button>
-                                            )}
-
-                                            {/* Delete Button (for history) */}
-                                            {(viewMode === 'history' || (viewMode === 'directory' && !searchTerm) || (viewMode === 'directory' && chatHistoryIds.includes(user.id))) && (
-                                                <button
-                                                    onClick={(e) => { handleDeleteChat(e, user.id); setActionsUserId(null); }}
-                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
-                                                >
-                                                    <Trash className="retro-iridescent-orange" />
-                                                    <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter">Delete</span>
-                                                </button>
-                                            )}
-                                        </div>
-                                        {/* Close Overlay */}
-                                        <button
-                                            onClick={() => setActionsUserId(null)}
-                                            className="px-4 flex items-center justify-center border-l border-white/5 hover:bg-white/5 text-[#8696a0] transition-colors"
-                                        >
-                                            <X className="w-5 h-5" />
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    ))
+                        );
+                    })
                 ) : (
-                    <div className="text-center py-10 text-[#8696a0]">
-                        <p className="text-sm">
-                            {loading ? 'Loading...' :
-                                (viewMode === 'directory' && !searchTerm) ? 'Type a name to search for users' :
-                                    (viewMode === 'call' && !searchTerm && callHistory.length === 0) ? 'No recent calls yet' :
-                                        (viewMode === 'call' && searchTerm) ? 'Type a name to call' :
-                                            (viewMode === 'contacts' && contactUsers.length === 0) ? 'No contacts saved yet' :
-                                                'No users found'}
-                        </p>
-                        <p className="text-xs mt-1 opacity-70">Your personal messages are end-to-end encrypted</p>
-                    </div>
+                    <div className="p-4 text-center text-[#8696a0]">No items found</div>
                 )}
             </div>
 
