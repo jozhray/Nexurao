@@ -393,11 +393,11 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                 return messages.some(m => m.text?.toLowerCase().includes(searchLower));
             }).map(u => ({ ...u, type: 'user' }));
         } else {
-            const callHistoryUserIds = [...new Set(callHistory.map(c => c.oderId))];
+            const callHistoryUserIds = [...new Set(callHistory.map(c => c.userId || c.oderId))];
             displayedItems = otherUsers.filter(u => callHistoryUserIds.includes(u.id))
                 .sort((a, b) => {
-                    const aLastCall = callHistory.filter(c => c.oderId === a.id).sort((x, y) => y.timestamp - x.timestamp)[0];
-                    const bLastCall = callHistory.filter(c => c.oderId === b.id).sort((x, y) => y.timestamp - x.timestamp)[0];
+                    const aLastCall = callHistory.filter(c => (c.userId || c.oderId) === a.id).sort((x, y) => y.timestamp - x.timestamp)[0];
+                    const bLastCall = callHistory.filter(c => (c.userId || c.oderId) === b.id).sort((x, y) => y.timestamp - x.timestamp)[0];
                     return (bLastCall?.timestamp || 0) - (aLastCall?.timestamp || 0);
                 }).map(u => ({ ...u, type: 'user' }));
         }
@@ -438,12 +438,19 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                 isBroadcast: true
             };
         } else {
+            const lastCall = viewMode === 'call' ? getLastCallInfo(item.id) : null;
+            let subtext = `@${item.name}`;
+            if (viewMode === 'call' && lastCall) {
+                const typeLabel = lastCall.type === 'incoming' ? '↙ Incoming' : lastCall.type === 'missed' ? '✗ Missed' : '↗ Outgoing';
+                subtext = `${typeLabel} • ${formatCallTime(lastCall.timestamp)}`;
+            }
             return {
                 id: item.id,
                 name: item.displayName || item.name,
-                subtext: `@${item.name}`,
+                subtext: subtext,
                 avatar: item.avatarUrl,
-                isUser: true
+                isUser: true,
+                timestamp: lastCall ? lastCall.timestamp : (item.timestamp || 0)
             };
         }
     };
@@ -531,7 +538,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
 
     // Get all calls for a specific user
     const getCallsForUser = (userId) => {
-        return callHistory.filter(c => c.oderId === userId).sort((a, b) => b.timestamp - a.timestamp);
+        return callHistory.filter(c => (c.userId || c.oderId) === userId).sort((a, b) => b.timestamp - a.timestamp);
     };
 
     // Get last call info for a user
@@ -868,8 +875,17 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                                     return null;
                                                 })()}
                                             </div>
-                                            <span className="text-xs text-[var(--wa-text-muted)] truncate">{props.subtext}</span>
+                                            <span className={`text-xs truncate ${viewMode === 'call' && props.subtext.includes('Missed') ? 'text-rose-400' : 'text-[var(--wa-text-muted)]'}`}>
+                                                {props.subtext}
+                                            </span>
                                         </div>
+                                        {props.timestamp > 0 && (
+                                            <div className="flex flex-col items-end shrink-0 ml-2">
+                                                <span className="text-[11px] text-[var(--wa-text-muted)]">
+                                                    {formatCallTime(props.timestamp)}
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Action Overlay Only for Users for now */}

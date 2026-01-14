@@ -1570,14 +1570,14 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                 className="text-slate-400 hover:text-cyan-400 transition-all p-1 sm:p-2 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Attach Document"
                             >
-                                <Plus className="w-5 h-5 sm:w-6 sm:h-6" />
+                                <Plus className="w-5 h-5 sm:w-6 sm:h-6 retro-iridescent" />
                             </button>
                             <button
                                 onClick={handleMediaClick}
                                 className="text-slate-400 hover:text-cyan-400 transition-all p-1 sm:p-2 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Send Image/Video/GIF"
                             >
-                                <ImageIcon className="w-5 h-5 sm:w-6 sm:h-6" />
+                                <ImageIcon className="w-5 h-5 sm:w-6 sm:h-6 retro-iridescent" />
                             </button>
                         </div>
 
@@ -1621,7 +1621,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                         className="p-1 sm:p-2 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Share Location"
                                     >
-                                        <MapPin className="w-5 h-5 sm:w-6 sm:h-6" />
+                                        <MapPin className="w-5 h-5 sm:w-6 sm:h-6 retro-iridescent" />
                                     </button>
                                     <button
                                         type="button"
@@ -1629,7 +1629,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                         className="p-1 sm:p-2 rounded-full flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/5 transition-all hover:scale-110 active:scale-90"
                                         title="Record Voice Message"
                                     >
-                                        <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
+                                        <Mic className="w-5 h-5 sm:w-6 sm:h-6 retro-iridescent" />
                                     </button>
                                 </div>
                             )}

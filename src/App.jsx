@@ -788,7 +788,6 @@ function App() {
     const newLogRef = push(historyRef);
     set(newLogRef, {
       userId: otherUserId,
-      oderId: otherUserId,
       type,
       timestamp: Date.now(),
       duration: duration || 0
@@ -921,16 +920,16 @@ function App() {
                 </div>
               </div>
               <div className="flex gap-1 text-[var(--wa-text-muted)]">
-                <button className={`p-2 hover:bg-[var(--wa-border)] rounded-full relative ${searchViewMode === 'directory' ? 'text-[var(--wa-teal)]' : ''}`} onClick={() => setSearchViewMode('directory')} title="New Chat">
-                  <MessageCircle size={20} />
+                <button className={`p-2 hover:bg-[var(--wa-border)] rounded-full relative group/btn ${searchViewMode === 'directory' ? 'text-[var(--wa-teal)]' : ''}`} onClick={() => setSearchViewMode('directory')} title="New Chat">
+                  <MessageCircle size={20} className="retro-iridescent" />
                   {totalUnread > 0 && <span className="absolute -top-1 -right-1 bg-[#00a884] text-[#111b21] text-[10px] font-bold px-1.5 h-4 min-w-[16px] flex items-center justify-center rounded-full ring-2 ring-[var(--wa-panel)]">{totalUnread}</span>}
                 </button>
-                <button className={`p-2 hover:bg-[var(--wa-border)] rounded-full relative ${searchViewMode === 'call' ? 'text-[var(--wa-teal)]' : ''}`} onClick={() => { setSearchViewMode('call'); setMissedCallUsers([]); }} title="Call">
-                  <Phone size={20} />
+                <button className={`p-2 hover:bg-[var(--wa-border)] rounded-full relative group/btn ${searchViewMode === 'call' ? 'text-[var(--wa-teal)]' : ''}`} onClick={() => { setSearchViewMode('call'); setMissedCallUsers([]); }} title="Call">
+                  <Phone size={20} className="retro-iridescent" />
                   {missedCallUsers.length > 0 && <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 h-4 min-w-[16px] flex items-center justify-center rounded-full ring-2 ring-[var(--wa-panel)]">{missedCallUsers.length}</span>}
                 </button>
-                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full" onClick={() => setShowSettings(true)}><SettingsIcon size={20} /></button>
-                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full" onClick={handleLogout}><LogOut size={20} /></button>
+                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full group/btn" onClick={() => setShowSettings(true)}><SettingsIcon size={20} className="retro-iridescent" /></button>
+                <button className="p-2 hover:bg-[var(--wa-border)] rounded-full group/btn" onClick={handleLogout}><LogOut size={20} className="retro-iridescent-orange" /></button>
               </div>
             </div>
 
@@ -946,11 +945,11 @@ function App() {
             <div className="wa-input-area mt-auto border-t border-[var(--wa-border)] p-2 bg-[var(--wa-bg)] shrink-0">
               <div className="w-full grid grid-cols-[1fr_40px_1fr] gap-2 items-center bg-[var(--wa-panel)] rounded-full p-1 border border-[var(--wa-border)]">
                 <button onClick={toggleTheme} className={`flex items-center justify-center gap-2 py-3 rounded-full text-xs font-bold transition-all ${theme === 'light' ? 'bg-[#00a884] text-white shadow-lg' : 'text-[var(--wa-text-muted)]'}`}>
-                  <Sun size={20} /> Light
+                  <Sun size={20} className="retro-iridescent" /> Light
                 </button>
                 <span className="text-[10px] uppercase text-center text-[var(--wa-text-muted)] font-black">Mode</span>
                 <button onClick={toggleTheme} className={`flex items-center justify-center gap-2 py-3 rounded-full text-xs font-bold transition-all ${theme === 'dark' ? 'bg-[#00a884] text-white shadow-lg' : 'text-[var(--wa-text-muted)]'}`}>
-                  Dark <Moon size={20} />
+                  Dark <Moon size={20} className="retro-iridescent" />
                 </button>
               </div>
             </div>
