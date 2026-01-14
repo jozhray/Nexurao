@@ -860,7 +860,7 @@ function App() {
 
   return (
     <div className={`h-[100dvh] w-full flex overflow-hidden relative transition-colors duration-300 ${theme === 'light' ? 'light-theme bg-[#f0f2f5]' : 'bg-[#111b21]'}`}>
-      <svg width="0" height="0" className="absolute invisible pointer-events-none">
+      <svg width="0" height="0" style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }} aria-hidden="true">
         <defs>
           <linearGradient id="retro-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#06b6d4" />

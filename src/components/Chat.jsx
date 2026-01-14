@@ -1570,7 +1570,7 @@ export default function Chat({ user, roomId, onBack, chatName, chatAvatar, peerI
                                 className="text-slate-400 hover:text-cyan-400 transition-all p-1 sm:p-2 hover:bg-white/5 rounded-full hover:scale-110 active:scale-90"
                                 title="Attach Document"
                             >
-                                <Plus className="w-5 h-5 sm:w-6 sm:h-6 retro-iridescent" />
+                                <Plus className="w-5 h-5 sm:w-6 sm:h-6" style={{ stroke: '#06b6d4' }} />
                             </button>
                             <button
                                 onClick={handleMediaClick}

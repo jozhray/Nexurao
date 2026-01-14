@@ -916,7 +916,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
 
                                                 <button
                                                     onClick={() => { setCallLogUser(item); setActionsUserId(null); }}
-                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn min-w-[50px]"
                                                 >
                                                     <History className="retro-iridescent" />
                                                     <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">History</span>
