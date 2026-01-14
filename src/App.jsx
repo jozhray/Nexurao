@@ -451,13 +451,13 @@ function App() {
         body: JSON.stringify(callData)
       });
     }
-    setOutgoingCall({ recipientId, status: 'ringing', startTime: Date.now() });
+    setOutgoingCall({ recipientId, status: 'ringing', startTime: Date.now(), roomId: chat.id });
     ringbackRef.current = new Audio(RINGBACK_URL);
     ringbackRef.current.loop = true;
     ringbackRef.current.play().catch(e => console.warn("Ringback failed:", e));
 
     callTimeoutRef.current = setTimeout(() => {
-      handleCallTimeout(recipientId, callRef);
+      handleCallTimeout(recipientId, chat.id);
     }, 45000);
   };
 
@@ -729,14 +729,14 @@ function App() {
         body: JSON.stringify(callData)
       });
     }
-    setOutgoingCall({ recipientId, status: 'ringing', startTime: Date.now() });
+    setOutgoingCall({ recipientId, status: 'ringing', startTime: Date.now(), roomId: activeChat.id });
     ringbackRef.current = new Audio(RINGBACK_URL);
     ringbackRef.current.loop = true;
     ringbackRef.current.play().catch(e => console.warn("Ringback blocked:", e));
-    callTimeoutRef.current = setTimeout(() => handleCallTimeout(recipientId), 30000);
+    callTimeoutRef.current = setTimeout(() => handleCallTimeout(recipientId, activeChat.id), 30000);
   };
 
-  const handleCallTimeout = (recipientId) => {
+  const handleCallTimeout = (recipientId, roomId) => {
     const callRef = ref(db, `calls/${recipientId}`);
     update(callRef, { status: 'timeout' }).then(() => {
       setTimeout(() => remove(callRef), 1000);
@@ -745,9 +745,10 @@ function App() {
       ringbackRef.current.pause();
       ringbackRef.current = null;
     }
-    setOutgoingCall({ recipientId, status: 'no_answer', startTime: Date.now() });
+    setOutgoingCall({ recipientId, status: 'no_answer', startTime: Date.now(), roomId });
     setIsOutgoingMinimized(false);
     logCallToHistory(recipientId, 'outgoing', 0);
+    if (roomId) logCallMessage(roomId, 'Missed voice call');
     setTimeout(() => setOutgoingCall(null), 3000);
   };
 
@@ -760,9 +761,11 @@ function App() {
         ringbackRef.current.pause();
         ringbackRef.current = null;
       }
+      const rId = outgoingCall.roomId;
       setOutgoingCall(null);
       setIsOutgoingMinimized(false);
       logCallToHistory(outgoingCall.recipientId, 'outgoing', 0);
+      if (rId) logCallMessage(rId, 'Canceled voice call');
     }
   };
 
@@ -791,6 +794,18 @@ function App() {
       type,
       timestamp: Date.now(),
       duration: duration || 0
+    });
+  };
+
+  const logCallMessage = (roomId, text, type = 'call_log') => {
+    if (!roomId) return;
+    const chatRef = ref(db, `messages/${roomId}`);
+    push(chatRef, {
+      userId: 'system',
+      userName: 'Nexurao',
+      text: text,
+      timestamp: serverTimestamp(),
+      type: type
     });
   };
 
@@ -833,6 +848,12 @@ function App() {
     if (user) remove(ref(db, `calls/${user.id}`));
   };
 
+  const handleDeclineCall = (callData) => {
+    if (!callData) return;
+    logCallToHistory(callData.callerId, 'missed');
+    if (callData.roomId) logCallMessage(callData.roomId, 'Missed voice call');
+  };
+
   if (!user) {
     return <Auth onLogin={setUser} />;
   }
@@ -859,8 +880,8 @@ function App() {
       <IncomingCall
         currentUser={user}
         onAccept={handleAcceptCall}
-        onDecline={(callData) => callData && callData.callerId && logCallToHistory(callData.callerId, 'missed')}
-        onMissed={(callData) => callData && callData.callerId && logCallToHistory(callData.callerId, 'missed')}
+        onDecline={handleDeclineCall}
+        onMissed={handleDeclineCall}
         ringtone={phoneRingtone}
       />
 

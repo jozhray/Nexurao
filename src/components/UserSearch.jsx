@@ -393,12 +393,14 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                 return messages.some(m => m.text?.toLowerCase().includes(searchLower));
             }).map(u => ({ ...u, type: 'user' }));
         } else {
-            const callHistoryUserIds = [...new Set(callHistory.map(c => c.userId || c.oderId))];
+            const callHistoryUserIds = [...new Set(callHistory.map(c => c.userId || c.oderId).filter(id => id && id !== currentUser.id))];
             displayedItems = otherUsers.filter(u => callHistoryUserIds.includes(u.id))
                 .sort((a, b) => {
-                    const aLastCall = callHistory.filter(c => (c.userId || c.oderId) === a.id).sort((x, y) => y.timestamp - x.timestamp)[0];
-                    const bLastCall = callHistory.filter(c => (c.userId || c.oderId) === b.id).sort((x, y) => y.timestamp - x.timestamp)[0];
-                    return (bLastCall?.timestamp || 0) - (aLastCall?.timestamp || 0);
+                    const aCalls = callHistory.filter(c => (c.userId || c.oderId) === a.id).sort((x, y) => (y.timestamp || 0) - (x.timestamp || 0));
+                    const bCalls = callHistory.filter(c => (c.userId || c.oderId) === b.id).sort((x, y) => (y.timestamp || 0) - (x.timestamp || 0));
+                    const aLast = aCalls[0]?.timestamp || 0;
+                    const bLast = bCalls[0]?.timestamp || 0;
+                    return bLast - aLast;
                 }).map(u => ({ ...u, type: 'user' }));
         }
     }
@@ -544,7 +546,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
     // Get last call info for a user
     const getLastCallInfo = (userId) => {
         const userCalls = getCallsForUser(userId);
-        return userCalls[0] || null;
+        return userCalls.length > 0 ? userCalls[0] : null;
     };
 
     // Format call time
