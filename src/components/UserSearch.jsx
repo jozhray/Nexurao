@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { ref, onValue, set, remove, get, query, limitToLast } from 'firebase/database';
-import { Search, Trash, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp, MoreVertical, Plus, Megaphone, Trash2 } from 'lucide-react';
+import { Search, Trash, X, UserPlus, UserMinus, Users, Phone, MessageCircle, Info, ChevronDown, ChevronUp, MoreVertical, Plus, Megaphone, Trash2, History, Clock, PhoneOff } from 'lucide-react';
 import CreateGroupModal from './CreateGroupModal';
 import CreateBroadcastListModal from './CreateBroadcastListModal';
 
@@ -46,6 +46,7 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
 
     // Active actions overlay state
     const [actionsUserId, setActionsUserId] = useState(null);
+    const [callLogUser, setCallLogUser] = useState(null); // New state for specific user history
     const longPressTimerRef = useRef(null);
     const isLongPressActiveRef = useRef(false);
 
@@ -913,6 +914,14 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                                                     <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">Call</span>
                                                 </button>
 
+                                                <button
+                                                    onClick={() => { setCallLogUser(item); setActionsUserId(null); }}
+                                                    className="flex flex-col items-center justify-center gap-1 flex-1 py-1 hover:bg-white/5 transition-colors rounded-lg active:scale-95 group/btn"
+                                                >
+                                                    <History className="retro-iridescent" />
+                                                    <span className="text-[9px] text-[#00a884] font-bold uppercase tracking-tighter">History</span>
+                                                </button>
+
                                                 {isContact(item.id) ? (
                                                     <button
                                                         onClick={(e) => { handleRemoveContact(e, item.id); setActionsUserId(null); }}
@@ -1146,6 +1155,81 @@ export default function UserSearch({ currentUser, onStartChat, onStartCall, view
                         </div>
                     </div>
                 )}
+            {/* Call Logs Modal for Specific User */}
+            {callLogUser && (
+                <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setCallLogUser(null)} />
+                    <div className="relative bg-[#111b21] border border-white/10 rounded-2xl w-full max-w-[400px] h-[80vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in slide-in-from-bottom-5 duration-300">
+                        {/* Header */}
+                        <div className="p-4 border-b border-white/10 flex items-center justify-between bg-[#1c2c33]">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-slate-600 overflow-hidden">
+                                    {isValidAvatarUrl(callLogUser.avatarUrl) ? (
+                                        <img src={callLogUser.avatarUrl} className="w-full h-full object-cover" />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-white bg-slate-500">
+                                            {(callLogUser.displayName || callLogUser.name)?.[0]?.toUpperCase()}
+                                        </div>
+                                    )}
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-white leading-tight">{callLogUser.displayName || callLogUser.name}</h3>
+                                    <p className="text-[10px] text-[#8696a0] uppercase tracking-wider font-bold">Call History</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setCallLogUser(null)} className="p-2 text-[#8696a0] hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        {/* Logs List */}
+                        <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-[#0b141a]">
+                            {getCallsForUser(callLogUser.id).length > 0 ? (
+                                getCallsForUser(callLogUser.id).map((log, idx) => (
+                                    <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`p-2 rounded-lg ${log.type === 'missed' ? 'bg-rose-500/20 text-rose-500' : 'bg-[#00a884]/20 text-[#00a884]'}`}>
+                                                {log.type === 'outgoing' ? <Phone size={16} className="rotate-[135deg]" /> :
+                                                    log.type === 'incoming' ? <Phone size={16} /> :
+                                                        <PhoneOff size={16} />}
+                                            </div>
+                                            <div>
+                                                <p className={`text-sm font-bold ${log.type === 'missed' ? 'text-rose-400' : 'text-slate-200'}`}>
+                                                    {log.type.charAt(0).toUpperCase() + log.type.slice(1)} Call
+                                                </p>
+                                                <p className="text-[11px] text-[#8696a0] font-medium">
+                                                    {new Date(log.timestamp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        {log.duration > 0 && (
+                                            <span className="text-[11px] text-[#8696a0] font-mono bg-white/5 px-2 py-1 rounded-md">
+                                                {Math.floor(log.duration / 60)}m {log.duration % 60}s
+                                            </span>
+                                        )}
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-[#8696a0] opacity-50 space-y-2">
+                                    <Clock size={48} strokeWidth={1} />
+                                    <p className="text-sm font-medium">No call logs found</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer Action */}
+                        <div className="p-4 bg-[#1c2c33] border-t border-white/10 flex justify-center">
+                            <button
+                                onClick={() => { onStartCall(callLogUser); setCallLogUser(null); }}
+                                className="flex items-center gap-2 bg-[#00a884] text-[#111b21] px-6 py-2.5 rounded-full font-bold shadow-lg hover:scale-105 active:scale-95 transition-all text-sm"
+                            >
+                                <Phone size={18} fill="currentColor" />
+                                Start Voice Call
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
